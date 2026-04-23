@@ -1,64 +1,78 @@
 import streamlit as st
 import pandas as pd
 
-# 1. 画面のデザイン設定
-st.set_page_config(page_title="商品検索アプリ", layout="centered")
+# 1. 画面デザイン設定
+st.set_page_config(page_title="商品データAI検索", layout="wide")
 
-st.title("🔍 商品検索アプリ")
-st.write("品記号をリストから選択、または直接入力してください。")
+st.title("🚀 スマート商品検索")
+st.write("品コードや品記号を自由に入力してください。関連するデータを自動で抽出します。")
 
-# 2. スプレッドシートの読み込み
+# 2. データ読み込み
 SHEET_ID = '1_7zcANuyis77mx0OfAw1TNZ2sfYn7Cifb74mmilSIH4'
 URL = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv'
 
-@st.cache_data # データを毎回読み込まないようにキャッシュして高速化
+@st.cache_data
 def load_data():
     df = pd.read_csv(URL)
     df.columns = [str(c).strip() for c in df.columns]
+    # 全ての列を文字列に変換し、検索しやすくする
+    for col in df.columns:
+        df[col] = df[col].astype(str).str.replace(r'\.0$', '', regex=True)
     return df
 
 try:
     df = load_data()
-    col_code = df.columns[0]  # A列：品コード
-    col_sign = df.columns[1]  # B列：品記号
+    col_code = df.columns[0]   # 品コード
+    col_sign = df.columns[1]   # 品記号
+    col_page = df.columns[2] if len(df.columns) > 2 else None # ページ番号
 
-    # 全ての品記号をリストとして取得（重複削除）
-    sign_list = df[col_sign].astype(str).unique().tolist()
-    sign_list.sort() # アルファベット順に並び替え
+    # 3. 強力な検索UI（自由入力形式）
+    search_query = st.text_input("検索ワードを入力（例：記号の一部、コードの数字など）", placeholder="入力を始めると自動で検索します...")
 
-    # 3. 検索UI（セレクトボックスに変更）
-    # index=None にすることで、最初は何も選択されていない状態にします
-    selected_sign = st.selectbox(
-        "品記号を選択または検索",
-        options=sign_list,
-        index=None,
-        placeholder="ここに入力して検索..."
-    )
+    if search_query:
+        # あいまい検索：品コードまたは品記号のどちらかに含まれていれば抽出
+        query = search_query.strip().lower()
+        result_df = df[
+            df[col_code].str.lower().str.contains(query) | 
+            df[col_sign].str.lower().str.contains(query)
+        ]
 
-    if selected_sign:
-        # 選択された品記号と一致する行を抽出
-        result = df[df[col_sign].astype(str) == selected_sign]
-
-        if not result.empty:
-            raw_code = result.iloc[0][col_code]
+        if not result_df.empty:
+            st.success(f"{len(result_df)} 件の候補が見つかりました。")
             
-            # 小数点を除去する処理
-            try:
-                if pd.notnull(raw_code):
-                    # 数値なら整数に変換、文字ならそのまま
-                    display_code = int(float(raw_code)) if isinstance(raw_code, (int, float, complex)) or str(raw_code).replace('.','',1).isdigit() else raw_code
-                else:
-                    display_code = "データなし"
-            except:
-                display_code = raw_code
+            # 複数ヒットした場合、どれを表示するか選択（1件なら自動選択）
+            if len(result_df) > 1:
+                target_item = st.selectbox("詳細を表示する項目を選択してください", 
+                                           options=result_df[col_sign].tolist())
+                final_result = result_df[result_df[col_sign] == target_item].iloc[0]
+            else:
+                final_result = result_df.iloc[0]
 
-            st.success("該当する品コードが見つかりました！")
-            st.markdown(f"### 品コード: `{display_code}`")
+            # 4. 結果表示（情報とPDF）
+            col1, col2 = st.columns([1, 2])
             
-    # データ確認用
-    with st.expander("登録データ一覧を表示"):
-        st.write(df)
+            with col1:
+                st.subheader("基本情報")
+                st.info(f"**品コード:** {final_result[col_code]}")
+                st.info(f"**品記号:** {final_result[col_sign]}")
+                
+                res_page = 1
+                if col_page and final_result[col_page] != "nan":
+                    res_page = final_result[col_page]
+                    st.warning(f"📖 カタログ {res_page} ページを表示中")
+
+            with col2:
+                # PDF埋め込み（Googleドライブのプレビュー形式）
+                pdf_url = f"https://drive.google.com/file/d/1ls9767Kregs2RGKOXU4q_MRjEJmwIhkT/preview#page={res_page}"
+                st.markdown(
+                    f'<iframe src="{pdf_url}" width="100%" height="800px"></iframe>',
+                    unsafe_allow_html=True
+                )
+        else:
+            st.warning("一致するデータがありません。別のワードを試してください。")
+    else:
+        st.info("左上の検索窓に文字を入力してください。")
 
 except Exception as e:
-    st.error("データの読み込みに失敗しました。")
-    st.info("スプレッドシートの共有設定を確認してください。")
+    st.error(f"読み込みエラーが発生しました。")
+    st.write(e)
