@@ -1,86 +1,86 @@
 import streamlit as st
 import pandas as pd
 
-# 1. 画面デザイン設定（ワイドモード）
-st.set_page_config(page_title="商品データAI検索", layout="wide")
+# ページ設定
+st.set_page_config(page_title="メンテナンス依頼システム", page_icon="🔒")
 
-st.title("🚀 スマート商品検索システム")
-st.write("品コード・品記号のどちらからでも検索できます。関連するPDFページも自動で表示します。")
-
-# 2. スプレッドシート読み込み設定
-SHEET_ID = '1_7zcANuyis77mx0OfAw1TNZ2sfYn7Cifb74mmilSIH4'
-URL = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv'
-
-@st.cache_data
-def load_data():
+# --- スプレッドシートデータの取得関数 ---
+@st.cache_data(ttl=60)  # 60秒間キャッシュして何度も読み込むのを防ぐ
+def load_user_data():
+    # ご提示のURLからCSV出力用URLを生成
+    sheet_id = "1AkMb1J2m3VZAIyMCKmr3T3E8-kJB0BDDdWQJuEn7YGc"
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0"
+    
     try:
-        df = pd.read_csv(URL)
-        df.columns = [str(c).strip() for c in df.columns]
-        # 小数点(.0)を消して文字列として扱う
-        for col in df.columns:
-            df[col] = df[col].astype(str).str.replace(r'\.0$', '', regex=True)
+        # スプレッドシートをPandas DataFrameとして読み込み
+        df = pd.read_csv(csv_url)
         return df
     except Exception as e:
-        st.error("スプレッドシートの読み込みに失敗しました。共有設定を確認してください。")
-        return pd.DataFrame()
+        st.error(f"スプレッドシートの読み込みに失敗しました: {e}")
+        return None
 
-# 3. 実行処理
-df = load_data()
+# --- セッション状態（ログイン状態）の初期化 ---
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "user_name" not in st.session_state:
+    st.session_state.user_name = ""
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
 
-if not df.empty:
-    col_code = df.columns[0]  # A列
-    col_sign = df.columns[1]  # B列
-    col_page = df.columns[2] if len(df.columns) > 2 else None  # C列
+# --- 画面切り替え ---
+if not st.session_state.logged_in:
+    # ================= ログイン画面 =================
+    st.title("🔑 ログイン")
+    st.caption("登録済みのメールアドレスを入力してください")
 
-    # 検索窓
-    search_query = st.text_input("🔍 検索ワードを入力（記号やコードの一部でOK）", placeholder="ここに入力...")
-
-    if search_query:
-        query = search_query.strip().lower()
-        # あいまい検索を実行
-        result_df = df[
-            df[col_code].str.lower().str.contains(query) | 
-            df[col_sign].str.lower().str.contains(query)
-        ]
-
-        if not result_df.empty:
-            st.success(f"{len(result_df)} 件の候補が見つかりました。")
-            
-            # 複数ヒットした場合は選択させる
-            if len(result_df) > 1:
-                target_item = st.selectbox("詳細を表示する項目を選択してください", options=result_df[col_sign].tolist())
-                final_result = result_df[result_df[col_sign] == target_item].iloc[0]
-            else:
-                final_result = result_df.iloc[0]
-
-            # 画面を分割（左に情報、右にPDF）
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                st.subheader("📦 基本情報")
-                st.info(f"**品コード:** {final_result[col_code]}")
-                st.info(f"**品記号:** {final_result[col_sign]}")
-                
-                # ページ番号取得
-                res_page = "1"
-                if col_page and final_result[col_page] != "nan":
-                    res_page = final_result[col_page]
-                
-                st.warning(f"📖 カタログ {res_page} ページ付近")
-                
-                # PDFを別タブで開くボタン（これが最も確実です）
-                pdf_base_url = "https://drive.google.com/file/d/1ls9767Kregs2RGKOXU4q_MRjEJmwIhkT"
-                st.link_button("📄 PDFを全画面で開く", f"{pdf_base_url}/view?usp=sharing")
-
-            with col2:
-                st.subheader("📄 プレビュー")
-                # 埋め込み表示
-                pdf_embed_url = f"{pdf_base_url}/preview"
-                st.markdown(
-                    f'<iframe src="{pdf_embed_url}" width="100%" height="800px" allow="autoplay"></iframe>',
-                    unsafe_allow_html=True
-                )
+    email_input = st.text_input("メールアドレス", placeholder="example@domain.com")
+    
+    if st.button("ログイン", type="primary"):
+        if not email_input:
+            st.warning("メールアドレスを入力してください。")
         else:
-            st.warning("一致するデータが見つかりません。")
-    else:
-        st.info("検索ワードを入力してください。")
+            with st.spinner("認証中..."):
+                df_users = load_user_data()
+                
+                if df_users is not None:
+                    # 列名の余分な空白を除去
+                    df_users.columns = df_users.columns.str.strip()
+                    
+                    # A列（メールアドレス）とC列（担当者名）の存在確認
+                    # ※列名が異なる場合はインデックス位置（0列目, 2列目）で取得
+                    email_col = df_users.columns[0]  # A列
+                    name_col = df_users.columns[2]   # C列
+                    
+                    # 入力されたメールアドレスの検索
+                    user_match = df_users[df_users[email_col].astype(str).str.strip().str.lower() == email_input.strip().lower()]
+                    
+                    if not user_match.empty:
+                        # 認証成功
+                        matched_name = user_match.iloc[0][name_col]
+                        
+                        st.session_state.logged_in = True
+                        st.session_state.user_email = email_input.strip()
+                        st.session_state.user_name = matched_name
+                        
+                        st.success(f"ログイン成功！ 担当者: {matched_name} 様")
+                        st.rerun()  # 画面を再描画してメイン画面へ切り替え
+                    else:
+                        st.error("登録されていないメールアドレスです。")
+
+else:
+    # ================= ログイン後のメイン画面 =================
+    # サイドバーにユーザー情報とログアウトボタンを表示
+    st.sidebar.write(f"👤 **{st.session_state.user_name}** 様")
+    st.sidebar.caption(f"📧 {st.session_state.user_email}")
+    
+    if st.sidebar.button("ログアウト"):
+        st.session_state.logged_in = False
+        st.session_state.user_name = ""
+        st.session_state.user_email = ""
+        st.rerun()
+
+    # メインコンテンツエリア
+    st.title("🛠️ メンテナンス依頼システム")
+    st.write(f"ようこそ、**{st.session_state.user_name}** さん！")
+    
+    st.info("ここに今後「メンテナンス依頼書」の機能を実装していきます。")
