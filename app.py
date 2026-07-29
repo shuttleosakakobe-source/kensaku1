@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- ページ設定 ---
-st.set_page_config(page_title="メンテナンス依頼アプリ", layout="wide")
+st.set_page_config(page_title="メンテナンス依頼フォーム", layout="wide")
 
 # --- スプレッドシート接続設定 ---
 SPREADSHEET_KEY = "19T0DlLHq48j20jFz73LFlPN1C5RdgqkaRTt2KXpgETs"
@@ -13,7 +13,6 @@ SPREADSHEET_KEY = "19T0DlLHq48j20jFz73LFlPN1C5RdgqkaRTt2KXpgETs"
 @st.cache_resource
 def get_gspread_client():
     try:
-        # Streamlit Secrets から認証情報を取得
         credentials = Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
             scopes=["https://www.googleapis.com/auth/spreadsheets"]
@@ -33,7 +32,7 @@ def get_worksheet():
             st.error(f"スプレッドシートを開けませんでした: {e}")
     return None
 
-# --- ヘッダー自動設定（初回のみ） ---
+# --- ヘッダー自動設定（後続アプリが読み込みやすい固定列構造） ---
 def ensure_headers(ws):
     if ws and len(ws.get_all_values()) == 0:
         headers = ["送信日時", "依頼種別", "担当者名", "顧客コード"]
@@ -42,12 +41,12 @@ def ensure_headers(ws):
         ws.append_row(headers)
 
 # --- アプリ画面レイアウト ---
-st.title("🛠️ メンテナンス依頼・データ管理")
+st.title("🛠️ メンテナンス依頼フォーム")
 
-tab1, tab2 = st.tabs(["📝 依頼フォーム入力", "📋 送信データ一覧・詳細確認"])
+tab1, tab2 = st.tabs(["📝 依頼入力", "📋 送信履歴確認"])
 
 # -------------------------------------------------------------------
-# TAB 1: 入力フォーム
+# TAB 1: 担当者用 入力フォーム
 # -------------------------------------------------------------------
 with tab1:
     st.subheader("■ 基本情報")
@@ -62,9 +61,8 @@ with tab1:
     st.markdown("---")
     st.subheader("■ 商品明細（最大5件）")
     
-    # 5件分の入力枠を作成
+    # 商品1〜5の入力フォーム生成
     items_input = []
-    
     for i in range(1, 6):
         st.markdown(f"**【商品 {i}】**")
         col1, col2, col3 = st.columns([2, 1, 1])
@@ -76,7 +74,7 @@ with tab1:
         with col3:
             price = st.number_input(f"単価", min_value=0, value=0, key=f"price_{i}")
         
-        # 入力があれば値を保持、空欄なら空文字として保持
+        # 未入力の場合は空文字（""）をセットして列の数を揃える
         if code.strip():
             items_input.extend([code.strip(), qty, price])
         else:
@@ -93,23 +91,24 @@ with tab1:
             if ws:
                 ensure_headers(ws)
                 
-                # 1行分のデータを作成
+                # 1行分のデータを作成（後続アプリがパースしやすい1行形式）
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 row_data = [now_str, request_type, staff_name, customer_code] + items_input
                 
-                # 書き込み実行
+                # スプレッドシートへ追加
                 ws.append_row(row_data)
-                st.success("✅ スプレッドシートへ正常に送信されました！")
+                st.success("✅ 送信が完了しました！")
                 st.balloons()
 
 # -------------------------------------------------------------------
-# TAB 2: 一覧・詳細確認画面（データ表示）
+# TAB 2: 送信後の確認用画面（担当者が送信漏れ・誤りを確認するため）
 # -------------------------------------------------------------------
 with tab2:
-    st.subheader("📋 送信済みデータ一覧")
+    st.subheader("📋 送信済みデータ確認")
     
-    if st.button("最新データに更新"):
+    if st.button("最新状態に更新"):
         st.cache_data.clear()
+        st.rerun()
         
     ws = get_worksheet()
     if ws:
@@ -117,36 +116,18 @@ with tab2:
         if records:
             df = pd.DataFrame(records)
             
-            # 1. 一覧表を表示（全体データ）
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # 簡易検索（自分の送信データを確認用）
+            search_kw = st.text_input("顧客コードまたは担当者名で検索", value="", placeholder="例: 10001")
             
-            st.markdown("---")
-            st.subheader("🔍 伝票風 詳細プレビュー")
-            
-            # 2. 特定の行を選択して綺麗に表示する機能
-            selected_index = st.number_input("詳細を表示したい行番号 (1〜)", min_value=1, max_value=len(df), value=len(df))
-            
-            selected_row = df.iloc[selected_index - 1]
-            
-            # カード形式で詳細を表示
-            st.info(f"**送信日時:** {selected_row.get('送信日時')} | **依頼種別:** {selected_row.get('依頼種別')} | **担当者:** {selected_row.get('担当者名')} | **顧客コード:** {selected_row.get('顧客コード')}")
-            
-            # 空白でない商品だけをピックアップして綺麗に表にする
-            detail_items = []
-            for i in range(1, 6):
-                code = selected_row.get(f"商品{i}_記号")
-                if code and str(code).strip() != "":
-                    detail_items.append({
-                        "商品番号": f"商品 {i}",
-                        "商品記号": code,
-                        "数量": selected_row.get(f"商品{i}_数量"),
-                        "単価": selected_row.get(f"商品{i}_単価")
-                    })
-            
-            if detail_items:
-                st.table(pd.DataFrame(detail_items))
-            else:
-                st.write("※商品明細の入力はありません。")
+            filtered_df = df.copy()
+            if search_kw.strip():
+                kw = search_kw.strip().lower()
+                mask = (
+                    filtered_df["顧客コード"].astype(str).str.lower().str.contains(kw) |
+                    filtered_df["担当者名"].astype(str).str.lower().str.contains(kw)
+                )
+                filtered_df = filtered_df[mask]
                 
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
         else:
-            st.info("まだデータが登録されていません。")
+            st.info("まだ送信されたデータはありません。")
