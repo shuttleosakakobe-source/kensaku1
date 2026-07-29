@@ -32,13 +32,28 @@ def get_worksheet():
             st.error(f"スプレッドシートを開けませんでした: {e}")
     return None
 
-# --- ヘッダー自動設定（後続アプリが読み込みやすい固定列構造） ---
+# --- ヘッダー自動設定 ---
 def ensure_headers(ws):
     if ws and len(ws.get_all_values()) == 0:
-        headers = ["送信日時", "依頼種別", "担当者名", "顧客コード"]
+        headers = ["送信日時", "伝票出力種別", "依頼種別", "担当者名", "顧客コード"]
         for i in range(1, 6):
             headers.extend([f"商品{i}_記号", f"商品{i}_数量", f"商品{i}_単価"])
         ws.append_row(headers)
+
+# --- 顧客検索処理（過去データから顧客コードで検索） ---
+def search_customer_data(customer_code):
+    ws = get_worksheet()
+    if ws and customer_code.strip():
+        records = ws.get_all_records()
+        if records:
+            df = pd.DataFrame(records)
+            if "顧客コード" in df.columns:
+                matched = df[df["顧客コード"].astype(str) == customer_code.strip()]
+                if not matched.empty:
+                    # 直近の送信データを取得して担当者名を返す（顧客マスターがあればそこから引く形も可）
+                    latest_row = matched.iloc[-1]
+                    return latest_row.get("担当者名", "")
+    return None
 
 # --- アプリ画面レイアウト ---
 st.title("🛠️ メンテナンス依頼フォーム")
@@ -49,20 +64,55 @@ tab1, tab2 = st.tabs(["📝 依頼入力", "📋 送信履歴確認"])
 # TAB 1: 担当者用 入力フォーム
 # -------------------------------------------------------------------
 with tab1:
-    st.subheader("■ 基本情報")
-    col_b1, col_b2, col_b3 = st.columns(3)
-    with col_b1:
+    st.subheader("■ 伝票・基本情報設定")
+    
+    # 1. 伝票出力種別の選択
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        slip_type = st.selectbox(
+            "🏷️ 伝票出力種別（後続処理の指定）",
+            ["通常発注伝票", "至急依頼伝票", "見積作成依頼", "修理対応伝票"]
+        )
+    with col_t2:
         request_type = st.selectbox("依頼種別", ["商品発注", "修理依頼", "その他"])
-    with col_b2:
-        staff_name = st.text_input("担当者名")
-    with col_b3:
-        customer_code = st.text_input("顧客コード")
+
+    st.markdown("---")
+    st.subheader("■ 顧客 & 担当者情報")
+    
+    # 2. 顧客コードの入力と「顧客検索ボタン」
+    col_c1, col_c2, col_c3 = st.columns([2, 1, 2])
+    
+    # セッション状態の初期化（検索結果を保持するため）
+    if "staff_name_val" not in st.session_state:
+        st.session_state["staff_name_val"] = ""
+        
+    with col_c1:
+        customer_code = st.text_input("顧客コード", placeholder="例: 10001")
+    
+    with col_c2:
+        st.write(" ") # レイアウト調整（ボタンの高さを合わせる）
+        st.write(" ")
+        if st.button("🔍 顧客検索", use_container_width=True):
+            if customer_code:
+                found_staff = search_customer_data(customer_code)
+                if found_staff:
+                    st.session_state["staff_name_val"] = found_staff
+                    st.success(f"顧客データが見つかりました（前回担当: {found_staff}）")
+                else:
+                    st.info("該当する過去データがありませんでした。新規入力してください。")
+            else:
+                st.warning("顧客コードを入力してください。")
+
+    with col_c3:
+        staff_name = st.text_input("担当者名", value=st.session_state["staff_name_val"])
 
     st.markdown("---")
     st.subheader("■ 商品明細（最大5件）")
+    st.caption("※商品記号が未入力の行は、自動的にすべて空白として送信されます。")
     
-    # 商品1〜5の入力フォーム生成
+    # 3. 商品1〜5の入力フォーム（商品記号なしの場合空白にするロジック）
     items_input = []
+    
     for i in range(1, 6):
         st.markdown(f"**【商品 {i}】**")
         col1, col2, col3 = st.columns([2, 1, 1])
@@ -74,7 +124,8 @@ with tab1:
         with col3:
             price = st.number_input(f"単価", min_value=0, value=0, key=f"price_{i}")
         
-        # 未入力の場合は空文字（""）をセットして列の数を揃える
+        # 💡 条件判断: 商品記号が入力されている場合のみデータを保持し、
+        # 商品記号が空欄なら「記号・数量・単価」すべてを空白("")にする
         if code.strip():
             items_input.extend([code.strip(), qty, price])
         else:
@@ -85,15 +136,15 @@ with tab1:
     # 送信ボタン
     if st.button("送信する", type="primary", use_container_width=True):
         if not staff_name or not customer_code:
-            st.warning("「担当者名」と「顧客コード」を入力してください。")
+            st.warning("「顧客コード」と「担当者名」を入力してください。")
         else:
             ws = get_worksheet()
             if ws:
                 ensure_headers(ws)
                 
-                # 1行分のデータを作成（後続アプリがパースしやすい1行形式）
+                # 1行分のデータを作成
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                row_data = [now_str, request_type, staff_name, customer_code] + items_input
+                row_data = [now_str, slip_type, request_type, staff_name, customer_code] + items_input
                 
                 # スプレッドシートへ追加
                 ws.append_row(row_data)
@@ -101,7 +152,7 @@ with tab1:
                 st.balloons()
 
 # -------------------------------------------------------------------
-# TAB 2: 送信後の確認用画面（担当者が送信漏れ・誤りを確認するため）
+# TAB 2: 送信履歴確認
 # -------------------------------------------------------------------
 with tab2:
     st.subheader("📋 送信済みデータ確認")
@@ -115,19 +166,6 @@ with tab2:
         records = ws.get_all_records()
         if records:
             df = pd.DataFrame(records)
-            
-            # 簡易検索（自分の送信データを確認用）
-            search_kw = st.text_input("顧客コードまたは担当者名で検索", value="", placeholder="例: 10001")
-            
-            filtered_df = df.copy()
-            if search_kw.strip():
-                kw = search_kw.strip().lower()
-                mask = (
-                    filtered_df["顧客コード"].astype(str).str.lower().str.contains(kw) |
-                    filtered_df["担当者名"].astype(str).str.lower().str.contains(kw)
-                )
-                filtered_df = filtered_df[mask]
-                
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("まだ送信されたデータはありません。")
