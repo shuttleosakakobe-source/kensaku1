@@ -1,2 +1,3 @@
 streamlit
 pandas
+pip install streamlit pandas gspread oauth2 Flask
