@@ -32,12 +32,12 @@ def get_worksheet():
             st.error(f"スプレッドシートを開けませんでした: {e}")
     return None
 
-# --- ヘッダー自動設定 ---
+# --- ヘッダー自動設定（1商品につき「記号」「伝票出力」「数量」「単価」の4項目） ---
 def ensure_headers(ws):
     if ws and len(ws.get_all_values()) == 0:
-        headers = ["送信日時", "伝票出力種別", "依頼種別", "担当者名", "顧客コード"]
+        headers = ["送信日時", "依頼種別", "担当者名", "顧客コード"]
         for i in range(1, 6):
-            headers.extend([f"商品{i}_記号", f"商品{i}_数量", f"商品{i}_単価"])
+            headers.extend([f"商品{i}_記号", f"商品{i}_伝票出力", f"商品{i}_数量", f"商品{i}_単価"])
         ws.append_row(headers)
 
 # --- 顧客検索処理（過去データから顧客コードで検索） ---
@@ -50,7 +50,6 @@ def search_customer_data(customer_code):
             if "顧客コード" in df.columns:
                 matched = df[df["顧客コード"].astype(str) == customer_code.strip()]
                 if not matched.empty:
-                    # 直近の送信データを取得して担当者名を返す（顧客マスターがあればそこから引く形も可）
                     latest_row = matched.iloc[-1]
                     return latest_row.get("担当者名", "")
     return None
@@ -64,33 +63,24 @@ tab1, tab2 = st.tabs(["📝 依頼入力", "📋 送信履歴確認"])
 # TAB 1: 担当者用 入力フォーム
 # -------------------------------------------------------------------
 with tab1:
-    st.subheader("■ 伝票・基本情報設定")
-    
-    # 1. 伝票出力種別の選択
-    col_t1, col_t2 = st.columns(2)
-    with col_t1:
-        slip_type = st.selectbox(
-            "🏷️ 伝票出力種別（後続処理の指定）",
-            ["通常発注伝票", "至急依頼伝票", "見積作成依頼", "修理対応伝票"]
-        )
-    with col_t2:
+    st.subheader("■ 基本情報")
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
         request_type = st.selectbox("依頼種別", ["商品発注", "修理依頼", "その他"])
 
     st.markdown("---")
     st.subheader("■ 顧客 & 担当者情報")
     
-    # 2. 顧客コードの入力と「顧客検索ボタン」
-    col_c1, col_c2, col_c3 = st.columns([2, 1, 2])
-    
-    # セッション状態の初期化（検索結果を保持するため）
+    # セッション状態の初期化
     if "staff_name_val" not in st.session_state:
         st.session_state["staff_name_val"] = ""
         
+    col_c1, col_c2, col_c3 = st.columns([2, 1, 2])
     with col_c1:
         customer_code = st.text_input("顧客コード", placeholder="例: 10001")
     
     with col_c2:
-        st.write(" ") # レイアウト調整（ボタンの高さを合わせる）
+        st.write(" ") # レイアウト位置調整
         st.write(" ")
         if st.button("🔍 顧客検索", use_container_width=True):
             if customer_code:
@@ -108,28 +98,31 @@ with tab1:
 
     st.markdown("---")
     st.subheader("■ 商品明細（最大5件）")
-    st.caption("※商品記号が未入力の行は、自動的にすべて空白として送信されます。")
+    st.caption("※商品記号が未入力の行は、「伝票出力」「数量」「単価」を含め、自動的にすべて空白として送信されます。")
     
-    # 3. 商品1〜5の入力フォーム（商品記号なしの場合空白にするロジック）
+    # 5件分の商品入力欄
     items_input = []
     
     for i in range(1, 6):
         st.markdown(f"**【商品 {i}】**")
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2, col3, col4 = st.columns([2, 1.2, 1, 1])
         
         with col1:
             code = st.text_input(f"商品記号", key=f"code_{i}")
         with col2:
-            qty = st.number_input(f"数量", min_value=0, value=0, key=f"qty_{i}")
+            print_output = st.selectbox(f"伝票出力", ["有", "無"], key=f"print_{i}")
         with col3:
+            qty = st.number_input(f"数量", min_value=0, value=0, key=f"qty_{i}")
+        with col4:
             price = st.number_input(f"単価", min_value=0, value=0, key=f"price_{i}")
         
-        # 💡 条件判断: 商品記号が入力されている場合のみデータを保持し、
-        # 商品記号が空欄なら「記号・数量・単価」すべてを空白("")にする
+        # 💡 条件制御:
+        # 商品記号が入力されている場合のみ「記号・伝票出力・数量・単価」を保持
+        # 商品記号が未入力（空欄）の場合は、すべて空白("")をセットする
         if code.strip():
-            items_input.extend([code.strip(), qty, price])
+            items_input.extend([code.strip(), print_output, qty, price])
         else:
-            items_input.extend(["", "", ""])
+            items_input.extend(["", "", "", ""])
 
     st.markdown("---")
     
@@ -144,7 +137,7 @@ with tab1:
                 
                 # 1行分のデータを作成
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                row_data = [now_str, slip_type, request_type, staff_name, customer_code] + items_input
+                row_data = [now_str, request_type, staff_name, customer_code] + items_input
                 
                 # スプレッドシートへ追加
                 ws.append_row(row_data)
