@@ -3,18 +3,37 @@ import pandas as pd
 import datetime
 import gspread
 
-# ページ設定
+# --------------------------------------------------
+# 1. ページ設定とエラー（自動翻訳干渉）防止対策
+# --------------------------------------------------
 st.set_page_config(page_title="メンテナンス依頼システム", page_icon="🔒", layout="wide")
 
-# スプレッドシートの設定
+# ブラウザの自動翻訳（Google翻訳等）による React/Streamlit の DOM 干渉（removeChild エラー）を防止
+st.markdown(
+    """
+    <head>
+        <meta name="google" content="notranslate">
+    </head>
+    <style>
+        html, body, [class*="css"] {
+            translate: no !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# --------------------------------------------------
+# 2. 定数・スプレッドシート設定
+# --------------------------------------------------
 READ_SHEET_ID = "1AkMb1J2m3VZAIyMCKmr3T3E8-kJB0BDDdWQJuEn7YGc"      # マスタデータ参照用
-WRITE_SHEET_ID = "19T0DlLHq48j20jFz73LFlPN1C5RdgqkaRTt2KXpgETs"   # 送信・書き込み先
+WRITE_SHEET_ID = "19T0DlLHq48j20jFz73LFlPN1C5RdgqkaRTt2KXpgETs"   # 送信・書き込み先 (gid=0)
 
 # --- gspread 接続クライアントの初期化 ---
 @st.cache_resource
 def get_gspread_client():
     try:
-        # Streamlit secrets からサービスアカウント情報を取得して認証
+        # Streamlit secrets (gcp_service_account) から認証情報を取り出して接続
         credentials = dict(st.secrets["gcp_service_account"])
         gc = gspread.service_account_from_dict(credentials)
         return gc
@@ -22,14 +41,14 @@ def get_gspread_client():
         st.error(f"Google Drive API 認証エラー: {e}")
         return None
 
-# --- スプレッドシートへデータ追加関数 ---
+# --- スプレッドシートへデータ追記 ---
 def append_to_sheet(data_rows):
     gc = get_gspread_client()
     if gc is None:
         return False
     try:
         sh = gc.open_by_key(WRITE_SHEET_ID)
-        worksheet = sh.get_worksheet(0) # 1番目のシート(gid=0)
+        worksheet = sh.get_worksheet(0)  # 最初のシート (gid=0)
         
         # 複数行を一括追記
         worksheet.append_rows(data_rows, value_input_option='USER_ENTERED')
@@ -60,7 +79,9 @@ def load_customer_data():
         st.error(f"顧客マスターの読み込みに失敗しました: {e}")
         return None
 
-# --- セッション状態の初期化 ---
+# --------------------------------------------------
+# 3. セッション状態の初期化
+# --------------------------------------------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "user_name" not in st.session_state:
@@ -70,7 +91,9 @@ if "user_email" not in st.session_state:
 if "searched_customer" not in st.session_state:
     st.session_state.searched_customer = None
 
-# ================= ログイン画面 =================
+# ==================================================
+# 4. ログイン画面
+# ==================================================
 if not st.session_state.logged_in:
     st.title("🔑 ログイン")
     st.caption("登録済みのメールアドレスを入力してください")
@@ -100,8 +123,11 @@ if not st.session_state.logged_in:
                     else:
                         st.error("登録されていないメールアドレスです。")
 
-# ================= ログイン後のメイン画面 =================
+# ==================================================
+# 5. ログイン後のメイン画面
+# ==================================================
 else:
+    # サイドバー情報
     st.sidebar.write(f"👤 **{st.session_state.user_name}** 様")
     st.sidebar.caption(f"📧 {st.session_state.user_email}")
     
@@ -151,10 +177,11 @@ else:
         with c1:
             customer_code_input = st.text_input("顧客コードを入力", placeholder="例: 10001", key="cust_code_input")
         with c2:
-            st.write("")
+            st.write("")  # ボタン位置調整用の余白
             st.write("")
             search_btn = st.button("検索", type="primary", use_container_width=True)
 
+        # 検索ボタン処理
         if search_btn:
             if not customer_code_input:
                 st.warning("顧客コードを入力してください。")
@@ -184,6 +211,7 @@ else:
                             st.session_state.searched_customer = None
                             st.error("指定された顧客コードが見つかりませんでした。")
 
+        # 顧客情報の自動表示
         if st.session_state.searched_customer:
             cust_info = st.session_state.searched_customer
             res_c1, res_c2, res_c3 = st.columns(3)
@@ -244,53 +272,58 @@ else:
             if not st.session_state.searched_customer:
                 st.error("顧客検索を行ってください。")
             elif not order_details:
-                st.error("商品情報を1件以上入力してください（商品記号と1以上の数量が必要です）。")
+                st.error("商品情報を1件以上入力してください（商品記号を入力し、数量を1以上に指定してください）。")
             else:
                 with st.spinner("スプレッドシートへ送信中..."):
                     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     cust = st.session_state.searched_customer
                     
-                    # 複数明細をそれぞれ1行ずつのリストに変換
                     rows_to_append = []
                     for item in order_details:
                         row = [
-                            now_str,                             # タイムスタンプ
-                            current_type,                        # 依頼種別
-                            st.session_state.user_email,         # ログインユーザーメール
-                            st.session_state.user_name,          # ログインユーザー名
-                            cust["code"],                        # 顧客コード
-                            cust["store_name"],                  # 加盟店名
-                            cust["cust_name"],                   # お客様名
-                            cust["store_code"],                  # 加盟店コード
-                            item["商品記号"],                    # 商品記号
-                            item["発注数"],                      # 発注数
-                            item["単価"],                        # 単価
-                            item["伝票出力"],                    # 伝票出力
-                            str(delivery_date),                  # 納品日
-                            delivery_route,                      # 納品ルート
-                            delivery_person                      # 納品者
+                            now_str,                             # A列: 送信日時
+                            current_type,                        # B列: 依頼種別
+                            st.session_state.user_email,         # C列: 送信者メール
+                            st.session_state.user_name,          # D列: 送信者名
+                            cust["code"],                        # E列: 顧客コード
+                            cust["store_name"],                  # F列: 加盟店名
+                            cust["cust_name"],                   # G列: お客様名
+                            cust["store_code"],                  # H列: 加盟店コード
+                            item["商品記号"],                    # I列: 商品記号
+                            item["発注数"],                      # J列: 発注数
+                            item["単価"],                        # K列: 単価
+                            item["伝票出力"],                    # L列: 伝票出力
+                            str(delivery_date),                  # M列: 納品日
+                            delivery_route,                      # N列: 納品ルート
+                            delivery_person                      # O列: 納品者
                         ]
                         rows_to_append.append(row)
                     
-                    # 書き込み処理呼び出し
                     if append_to_sheet(rows_to_append):
                         st.success("スプレッドシートへの登録が完了しました！")
                     else:
-                        st.error("送信に失敗しました。認証情報およびスプレッドシートのアクセス権限を確認してください。")
+                        st.error("送信に失敗しました。認証設定（secrets.toml）やスプレッドシートのアクセス権限をご確認ください。")
 
     elif current_type == "納品数量変更":
         st.info("【納品数量変更】のフォームをここに作成します")
+
     elif current_type == "単発ルート変更":
         st.info("【単発ルート変更】のフォームをここに作成します")
+
     elif current_type == "ルート変更":
         st.info("【ルート変更】のフォームをここに作成します")
+
     elif current_type == "期間ストップ":
         st.info("【期間ストップ】のフォームをここに作成します")
+
     elif current_type == "契約内容変更":
         st.info("【契約内容変更】のフォームをここに作成します")
+
     elif current_type == "客残訂正":
         st.info("【客残訂正】のフォームをここに作成します")
+
     elif current_type == "解約処理":
         st.info("【解約処理】のフォームをここに作成します")
+
     elif current_type == "その他":
         st.info("【その他】のフォームをここに作成します")
