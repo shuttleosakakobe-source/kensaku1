@@ -29,15 +29,16 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
 列構成（書き込み先）:
   A: タイムスタンプ（日本時間）
   B: 拠点
-  C: 名前
+  C: 担当者名
   D: 顧客コード
-  E: 顧客名
-  F: お客様担当者名
-  G: 住所
-  H: 電話番号
-  I: サービス内容
-  J: 加盟店（顧客コードから自動検索）
-  K: コメント
+  E: 加盟店名（顧客コードから自動検索）
+  F: 顧客名（顧客コードから自動検索）
+  G: お客様担当者
+  H: 住所
+  I: 電話番号
+  J: サービス内容
+  K: 問い合わせ内容
+  L: コメント
 
 顧客マスタ（顧客コードから顧客名・加盟店を検索する参照元、同じスプレッドシート内）:
   大阪北店   (gid=1050026582): A=加盟店名, B=顧客コード, C=顧客名（2行目からデータ）
@@ -48,7 +49,7 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
   2. スプレッドシートの「拡張機能」→「Apps Script」で、GAS版フォームと同じ
      Code.gs（doPost対応済みのもの）を貼り付けてウェブアプリとしてデプロイする
   3. 発行された「ウェブアプリのURL」を、下の GAS_URL に貼り付ける
-  4. gid=0 のシートの1行目に見出し行（A〜K列）を入力しておく
+  4. gid=0 のシートの1行目に見出し行（A〜L列）を入力しておく
 """
 
 import io
@@ -71,8 +72,8 @@ SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
 TARGET_GID = 0  # 書き込み先シート（gid=0）
 
 HEADERS = [
-    "タイムスタンプ", "拠点", "名前", "顧客コード", "顧客名",
-    "お客様担当者名", "住所", "電話番号", "サービス内容", "加盟店", "コメント",
+    "タイムスタンプ", "拠点", "担当者名", "顧客コード", "加盟店名", "顧客名",
+    "お客様担当者", "住所", "電話番号", "サービス内容", "問い合わせ内容", "コメント",
 ]
 
 LOCATIONS = ["大阪中央店", "大阪北店"]
@@ -172,7 +173,7 @@ if "【ここにデプロイID" in GAS_URL:
 # --- 顧客コード検索（フォームの外に置き、入力のたびに即検索する） ---
 location = st.selectbox("拠点 *", LOCATIONS, key="location_select")
 customer_code = st.text_input(
-    "顧客コード", key="customer_code_input", help="入力すると顧客名・加盟店を自動検索します"
+    "顧客コード", key="customer_code_input", help="入力すると加盟店名・顧客名を自動検索します"
 )
 
 combo_key = f"{location}:{customer_code.strip()}"
@@ -197,15 +198,15 @@ if customer_code.strip():
         found = None
         st.error(f"顧客マスタの読み込みに失敗しました: {e}")
     if found:
-        st.success(f"✓ 顧客情報が見つかりました：{found['customer_name']} / {found['affiliate_name']}")
+        st.success(f"✓ 顧客情報が見つかりました：{found['affiliate_name']} / {found['customer_name']}")
     else:
-        st.warning("該当する顧客コードが見つかりませんでした。顧客名・加盟店は手入力してください。")
+        st.warning("該当する顧客コードが見つかりませんでした。加盟店名・顧客名は手入力してください。")
 
 with st.form("entry_form", clear_on_submit=True):
-    name = st.text_input("名前 *", help="対応した担当者の名前")
+    name = st.text_input("担当者名 *", help="対応した担当者の名前")
+    affiliate = st.text_input("加盟店名", key="affiliate_input")
     customer_name = st.text_input("顧客名 *", key="customer_name_input")
-    affiliate = st.text_input("加盟店", key="affiliate_input")
-    customer_contact = st.text_input("お客様担当者名")
+    customer_contact = st.text_input("お客様担当者")
     address = st.text_input("住所")
     phone = st.text_input("電話番号")
     service = st.selectbox("サービス内容 *", SERVICE_OPTIONS)
@@ -214,6 +215,7 @@ with st.form("entry_form", clear_on_submit=True):
     if service == "その他（自由記述）":
         service_other = st.text_input("サービス内容（自由記述） *")
 
+    inquiry_content = st.text_area("問い合わせ内容")
     comment = st.text_area("コメント")
 
     submitted = st.form_submit_button("送信", type="primary", use_container_width=True)
@@ -223,7 +225,7 @@ with st.form("entry_form", clear_on_submit=True):
         if "【ここにデプロイID" in GAS_URL:
             errors.append("GAS_URL が未設定のため送信できません。")
         if not name.strip():
-            errors.append("「名前」は必須です。")
+            errors.append("「担当者名」は必須です。")
         if not customer_name.strip():
             errors.append("「顧客名」は必須です。")
         if service == "その他（自由記述）" and not service_other.strip():
@@ -237,13 +239,14 @@ with st.form("entry_form", clear_on_submit=True):
                 "location": location,
                 "name": name.strip(),
                 "customerCode": customer_code.strip(),
-                "customerName": customer_name.strip(),
                 "affiliateName": affiliate.strip(),
+                "customerName": customer_name.strip(),
                 "customerContact": customer_contact.strip(),
                 "address": address.strip(),
                 "phone": phone.strip(),
                 "service": service,
                 "serviceOther": service_other.strip(),
+                "inquiryContent": inquiry_content.strip(),
                 "comment": comment.strip(),
             }
             result = submit_record(record)
