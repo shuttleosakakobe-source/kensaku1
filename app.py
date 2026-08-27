@@ -5,10 +5,9 @@
 指定のGoogleスプレッドシートに1行ずつ追記するフォームアプリです。
 「顧客コード」を入力して「検索」ボタンを押すと、拠点ごとの顧客マスタシートを検索し、
 「加盟店名」「加盟店コード」「顧客名」を自動入力します（見つからない場合は手入力できます）。
-また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成できます
-（作成したPDFはアプリ上にそのまま表示され、ダウンロードもできます）。反映が完了したレコードは
-書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの一覧に表示されなくなります
-（「印刷済みも表示する」で再表示可能）。
+また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成してダウンロードできます。
+反映が完了したレコードは書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの
+一覧に表示されなくなります（「印刷済みも表示する」で再表示可能）。
 
 【このバージョンの特徴】
 Google CloudでのAPI有効化・サービスアカウント発行は一切不要です。
@@ -73,7 +72,6 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
   4. gid=0 のシートの1行目に見出し行（A〜M列）を入力しておく
 """
 
-import base64
 import io
 import json
 
@@ -494,13 +492,6 @@ with tab_print:
                             pdf_res = requests.get(build_print_pdf_url(row_end), timeout=30)
                         content_type = pdf_res.headers.get("Content-Type", "")
                         if pdf_res.status_code == 200 and "pdf" in content_type.lower():
-                            b64_pdf = base64.b64encode(pdf_res.content).decode("utf-8")
-                            st.markdown(
-                                f'<iframe src="data:application/pdf;base64,{b64_pdf}" '
-                                f'width="100%" height="600" style="border:1px solid #ccc;border-radius:8px;">'
-                                f'</iframe>',
-                                unsafe_allow_html=True,
-                            )
                             st.download_button(
                                 "📄 PDFをダウンロード",
                                 data=pdf_res.content,
