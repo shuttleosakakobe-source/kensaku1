@@ -363,22 +363,26 @@ with tab_entry:
         else:
             st.warning("該当する顧客コードが見つかりませんでした。加盟店名・加盟店コード・顧客名は手入力してください。")
 
-    with st.form("entry_form", clear_on_submit=True):
-        name = st.text_input("担当者名 *", help="対応した担当者の名前")
+    # clear_on_submit は使わない。加盟店名・加盟店コード・顧客名を検索結果で
+    # あらかじめ session_state にセットしている都合上、clear_on_submit との
+    # 組み合わせで「表示上は値が入っているのに送信時に空扱いされる」不具合が
+    # 起きることがあるため、送信後のクリアは全項目を自前で行う（下記参照）。
+    with st.form("entry_form", clear_on_submit=False):
+        name = st.text_input("担当者名 *", help="対応した担当者の名前", key="name_input")
         affiliate = st.text_input("加盟店名", key="affiliate_input")
         affiliate_code = st.text_input("加盟店コード", key="affiliate_code_input")
         customer_name = st.text_input("顧客名 *", key="customer_name_input")
-        customer_contact = st.text_input("お客様担当者")
-        address = st.text_input("住所")
-        phone = st.text_input("電話番号")
-        service = st.selectbox("サービス内容 *", SERVICE_OPTIONS)
+        customer_contact = st.text_input("お客様担当者", key="contact_input")
+        address = st.text_input("住所", key="address_input")
+        phone = st.text_input("電話番号", key="phone_input")
+        service = st.selectbox("サービス内容 *", SERVICE_OPTIONS, key="service_select")
 
         service_other = ""
         if service == "その他（自由記述）":
-            service_other = st.text_input("サービス内容（自由記述） *")
+            service_other = st.text_input("サービス内容（自由記述） *", key="service_other_input")
 
-        inquiry_content = st.text_area("問い合わせ内容")
-        comment = st.text_area("コメント")
+        inquiry_content = st.text_area("問い合わせ内容", key="inquiry_input")
+        comment = st.text_area("コメント", key="comment_input")
 
         submitted = st.form_submit_button("送信", type="primary", use_container_width=True)
 
@@ -415,14 +419,15 @@ with tab_entry:
                 result = submit_record(record)
                 if result.get("status") == "success":
                     st.success(f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）。")
-                    # 検索結果で自動入力される項目は、clear_on_submitだけでは確実に
-                    # クリアされないことがあるため、次の入力のために明示的にリセットする
-                    # （これをしないと、連続で入力したときに前の顧客の情報が残ってしまう）。
-                    st.session_state.pop("customer_code_input", None)
-                    st.session_state.pop("_lookup_result", None)
-                    st.session_state.pop("affiliate_input", None)
-                    st.session_state.pop("affiliate_code_input", None)
-                    st.session_state.pop("customer_name_input", None)
+                    # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
+                    # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
+                    for key in (
+                        "customer_code_input", "_lookup_result",
+                        "name_input", "affiliate_input", "affiliate_code_input", "customer_name_input",
+                        "contact_input", "address_input", "phone_input", "service_select",
+                        "service_other_input", "inquiry_input", "comment_input",
+                    ):
+                        st.session_state.pop(key, None)
                     st.cache_data.clear()
                     st.rerun()
                 else:
