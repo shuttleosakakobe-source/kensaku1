@@ -415,8 +415,14 @@ with tab_entry:
                 result = submit_record(record)
                 if result.get("status") == "success":
                     st.success(f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）。")
+                    # 検索結果で自動入力される項目は、clear_on_submitだけでは確実に
+                    # クリアされないことがあるため、次の入力のために明示的にリセットする
+                    # （これをしないと、連続で入力したときに前の顧客の情報が残ってしまう）。
                     st.session_state.pop("customer_code_input", None)
                     st.session_state.pop("_lookup_result", None)
+                    st.session_state.pop("affiliate_input", None)
+                    st.session_state.pop("affiliate_code_input", None)
+                    st.session_state.pop("customer_name_input", None)
                     st.cache_data.clear()
                     st.rerun()
                 else:
