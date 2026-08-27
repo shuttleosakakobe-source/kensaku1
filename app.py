@@ -5,7 +5,10 @@
 指定のGoogleスプレッドシートに1行ずつ追記するフォームアプリです。
 「顧客コード」を入力して「検索」ボタンを押すと、拠点ごとの顧客マスタシートを検索し、
 「加盟店名」「加盟店コード」「顧客名」を自動入力します（見つからない場合は手入力できます）。
-また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成できます。
+また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成できます
+（作成したPDFはアプリ上にそのまま表示され、ダウンロードもできます）。反映が完了したレコードは
+書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの一覧に表示されなくなります
+（「印刷済みも表示する」で再表示可能）。
 
 【このバージョンの特徴】
 Google CloudでのAPI有効化・サービスアカウント発行は一切不要です。
@@ -54,11 +57,11 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
      に合わせて実データを書き込む。「シャトルコード」欄には加盟店コードを書き込む。
   ※ テンプレートの見出しの黒帯（各ブロックの相対1,3,5,7行目）は書き込み対象に含めない
      （実データが入る行だけをピンポイントで書き込み、見出しを消してしまわないようにする）。
-  C1: 加盟店名（ページ共通、書き込み先データのE列に対応）
+  C1: 加盟店名（ページ共通、書き込み先データのE列に対応、末尾に「様」を付けて表示）
   各ブロック（1件目は開始行4、2件目は19、3件目は34）の相対位置:
-    startRow+0: A=送信日(○月○日形式、書き込み先A列)  B=顧客コード(D列)  C=顧客名(G列)  D=シャトルコード＝加盟店コード(F列)
+    startRow+0: A=送信日(○月○日形式、書き込み先A列)  B=顧客コード(D列)  C=顧客名(G列、末尾に「様」)  D=シャトルコード＝加盟店コード(F列)
     startRow+2: A=住所(I列)  D=担当者名(C列)
-    startRow+4: A=お客様担当者(H列)  B=電話番号(J列、先頭0が消えないようテキスト形式で書き込み)  C=サービス内容(K列)
+    startRow+4: A=お客様担当者(H列、末尾に「様」)  B=電話番号(J列、先頭0が消えないようテキスト形式で書き込み)  C=サービス内容(K列)
     startRow+6: A=問い合わせ内容(L列)
     startRow+8: A=コメント(M列)
 
@@ -70,6 +73,7 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
   4. gid=0 のシートの1行目に見出し行（A〜M列）を入力しておく
 """
 
+import base64
 import io
 import json
 
@@ -83,7 +87,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/AKfycbwe_r9uNJR_eHl_2cK3MiiPtcVGtYrn1E2hsI-9AlALpH6ApXc7flGpJw_PGu5PaYlArg/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbzJuqCMUIIHhSgaNZrLlBW3xTx-BSs7xwAg-PGOhG4fcbual_na4-VVof-97rmR4qFWOA/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
@@ -94,6 +98,11 @@ HEADERS = [
     "タイムスタンプ", "拠点", "担当者名", "顧客コード", "加盟店名", "加盟店コード", "顧客名",
     "お客様担当者", "住所", "電話番号", "サービス内容", "問い合わせ内容", "コメント",
 ]
+# N列（14列目、書き込み先データではHEADERSの次の列）: 印刷済みチェック欄
+# （ユーザー側で追加したチェックボックス列。印刷タブで「反映してPDFを作成する」を押すと、
+# 対象レコードにチェックが入り、以降は印刷タブの一覧に表示されなくなる。
+# 実際にN列へチェックを入れる処理はCode.gs側のPRINTED_COLで行う）
+PRINTED_HEADER = "印刷済"
 
 LOCATIONS = ["大阪中央店", "大阪北店"]
 SERVICE_OPTIONS = ["サービスマスター", "ターミニックス", "メリーメイド", "その他（自由記述）"]
@@ -152,17 +161,33 @@ def lookup_customer(location: str, code: str):
     return load_master(location).get(code)
 
 
+def _is_printed(value) -> bool:
+    """印刷済み列（チェックボックス）の値が「チェック済み」を表すかどうかを判定する
+    （Googleスプレッドシートのチェックボックスは公開CSVでは TRUE/FALSE の文字列になる）"""
+    v = str(value if value is not None else "").strip().lower()
+    return v in {"true", "1", "済", "✓", "レ", "yes", "y", "on"}
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def load_all_records() -> pd.DataFrame:
-    """書き込み先シートの全レコードを読み込む（印刷対象の抽出に使用）"""
+    """書き込み先シートの全レコードを読み込む（印刷対象の抽出に使用）。
+    行番号（_sheet_row）と印刷済みフラグ（PRINTED_HEADER列があれば）も付与する。"""
     df = _fetch_csv(TARGET_GID)
     df = df.fillna("")
+    all_cols = HEADERS + [PRINTED_HEADER]
     if df.empty:
-        return pd.DataFrame(columns=HEADERS)
-    cols = HEADERS[: df.shape[1]] if df.shape[1] <= len(HEADERS) else HEADERS + [
-        f"col{i}" for i in range(len(HEADERS), df.shape[1])
-    ]
+        return pd.DataFrame(columns=all_cols + ["_sheet_row"])
+
+    extra = df.shape[1] - len(HEADERS)
+    if extra <= 0:
+        cols = HEADERS[: df.shape[1]]
+    else:
+        extra_names = [PRINTED_HEADER] + [f"col{i}" for i in range(len(HEADERS) + 1, df.shape[1])]
+        cols = HEADERS + extra_names[:extra]
     df.columns = cols
+    df["_sheet_row"] = df.index + 2  # 1行目は見出し、データは2行目から
+    if PRINTED_HEADER not in df.columns:
+        df[PRINTED_HEADER] = ""
     return df
 
 
@@ -185,8 +210,13 @@ def submit_record(record: dict) -> dict:
     return call_gas(payload)
 
 
-def sync_print_data(affiliate_name: str, blocks: list) -> dict:
-    payload = {"action": "SYNC_PRINT_DATA", "c1Value": affiliate_name, "blocks": blocks}
+def sync_print_data(affiliate_name: str, blocks: list, printed_rows: list) -> dict:
+    payload = {
+        "action": "SYNC_PRINT_DATA",
+        "c1Value": _with_sama(affiliate_name),
+        "blocks": blocks,
+        "printedRows": printed_rows,  # 印刷済みチェック（N列）を入れる行番号
+    }
     return call_gas(payload)
 
 
@@ -207,25 +237,33 @@ def _short_date(timestamp: str) -> str:
     return date_part
 
 
-def build_print_rows(row: dict | None) -> list:
-    """1件分のレコードを、ブロック開始行からの相対オフセットと書き込む4列分の値のペアに変換する。
-    テンプレートの見出しの黒帯（相対1,3,5,7行目）は含めない（誤って消してしまわないため）。"""
+def _with_sama(value: str) -> str:
+    """名称の後ろに「様」を付ける（空欄の場合は付けない）"""
+    value = (value or "").strip()
+    return f"{value}様" if value else ""
+
+
+def build_print_cells(row: dict | None) -> list:
+    """1件分のレコードを、ブロック開始行からの相対オフセット・列・値の1セルずつのリストに変換する。
+    テンプレートの見出しの黒帯（相対1,3,5,7行目）は書き込み対象に含めない。
+    各セルは1つずつ個別に書き込む（そのセルが結合範囲の一部でも、結合の左上セルに
+    正しく書き込まれるようにするため。特に「お問い合わせ内容」「コメント」は結合幅が
+    他と違う可能性があるので、行単位ではなくセル単位で扱う）。
+    顧客名・お客様担当者は印刷時に「様」を付けて表示する。"""
     if row is None:
         row = {}
     return [
-        {
-            "offset": 0,
-            "values": [
-                _short_date(row.get("タイムスタンプ", "")),
-                row.get("顧客コード", ""),
-                row.get("顧客名", ""),
-                row.get("加盟店コード", ""),
-            ],
-        },
-        {"offset": 2, "values": [row.get("住所", ""), "", "", row.get("担当者名", "")]},
-        {"offset": 4, "values": [row.get("お客様担当者", ""), row.get("電話番号", ""), row.get("サービス内容", ""), ""]},
-        {"offset": 6, "values": [row.get("問い合わせ内容", ""), "", "", ""]},
-        {"offset": 8, "values": [row.get("コメント", ""), "", "", ""]},
+        {"offset": 0, "col": 1, "value": _short_date(row.get("タイムスタンプ", ""))},
+        {"offset": 0, "col": 2, "value": row.get("顧客コード", "")},
+        {"offset": 0, "col": 3, "value": _with_sama(row.get("顧客名", ""))},
+        {"offset": 0, "col": 4, "value": row.get("加盟店コード", "")},
+        {"offset": 2, "col": 1, "value": row.get("住所", "")},
+        {"offset": 2, "col": 4, "value": row.get("担当者名", "")},
+        {"offset": 4, "col": 1, "value": _with_sama(row.get("お客様担当者", ""))},
+        {"offset": 4, "col": 2, "value": row.get("電話番号", "")},
+        {"offset": 4, "col": 3, "value": row.get("サービス内容", "")},
+        {"offset": 6, "col": 1, "value": row.get("問い合わせ内容", "")},
+        {"offset": 8, "col": 1, "value": row.get("コメント", "")},
     ]
 
 
@@ -391,24 +429,31 @@ with tab_entry:
 # ============================================================
 with tab_print:
     st.caption("加盟店を選ぶと、その加盟店のデータを最大3件ずつ印刷用フォーマットに反映してPDFを作成します。")
+    st.caption("印刷済み（N列にチェック）のレコードは、一覧から自動的に非表示になります。")
 
-    if st.button("🔄 データを更新", key="print_refresh"):
-        st.cache_data.clear()
-        st.rerun()
+    col_refresh, col_show_all = st.columns([1, 2])
+    with col_refresh:
+        if st.button("🔄 データを更新", key="print_refresh"):
+            st.cache_data.clear()
+            st.rerun()
+    with col_show_all:
+        show_printed = st.checkbox("印刷済みも表示する", key="print_show_printed")
 
     try:
         all_df = load_all_records()
     except Exception as e:
-        all_df = pd.DataFrame(columns=HEADERS)
+        all_df = pd.DataFrame(columns=HEADERS + [PRINTED_HEADER, "_sheet_row"])
         st.error(f"データの読み込みに失敗しました: {e}")
 
-    affiliates = sorted([a for a in all_df["加盟店名"].unique() if a.strip()]) if not all_df.empty else []
+    target_df = all_df if show_printed else all_df[~all_df[PRINTED_HEADER].apply(_is_printed)] if not all_df.empty else all_df
+
+    affiliates = sorted([a for a in target_df["加盟店名"].unique() if a.strip()]) if not target_df.empty else []
 
     if not affiliates:
-        st.info("印刷対象のデータがありません。")
+        st.info("印刷対象のデータがありません（すべて印刷済みの場合は「印刷済みも表示する」で確認できます）。")
     else:
         selected_affiliate = st.selectbox("印刷する加盟店", affiliates, key="print_affiliate_select")
-        store_df = all_df[all_df["加盟店名"] == selected_affiliate].reset_index(drop=True)
+        store_df = target_df[target_df["加盟店名"] == selected_affiliate].reset_index(drop=True)
         total = len(store_df)
         st.write(f"🏪 加盟店: **{selected_affiliate}** （該当データ: {total} 件）※1ページに最大3件まで配置されます。")
 
@@ -425,22 +470,37 @@ with tab_print:
 
             if st.button("📥 反映してPDFを作成する", key=f"print_sync_btn_{page_idx}", type="primary"):
                 blocks = []
+                printed_rows = []
                 for slot in range(3):
                     start_row = 4 + slot * 15
-                    row_dict = chunk.iloc[slot].to_dict() if slot < len(chunk) else None
-                    blocks.append({"startRow": start_row, "rows": build_print_rows(row_dict)})
+                    if slot < len(chunk):
+                        row_dict = chunk.iloc[slot].to_dict()
+                        sheet_row = row_dict.get("_sheet_row")
+                        if sheet_row:
+                            printed_rows.append(int(sheet_row))
+                    else:
+                        row_dict = None
+                    blocks.append({"startRow": start_row, "cells": build_print_cells(row_dict)})
 
                 with st.spinner("印刷用フォーマットシートへ反映しています..."):
-                    res = sync_print_data(selected_affiliate, blocks)
+                    res = sync_print_data(selected_affiliate, blocks, printed_rows)
 
                 if res.get("status") == "success":
-                    st.success("反映が完了しました。PDFを作成しています…")
+                    st.success("反映が完了しました（印刷済みとしてチェックしました）。PDFを作成しています…")
+                    st.cache_data.clear()  # 次回の一覧読み込みから、今回印刷した分を除外する
                     try:
                         row_end = 1 + len(chunk) * 15
                         with st.spinner("PDFを作成しています..."):
                             pdf_res = requests.get(build_print_pdf_url(row_end), timeout=30)
                         content_type = pdf_res.headers.get("Content-Type", "")
                         if pdf_res.status_code == 200 and "pdf" in content_type.lower():
+                            b64_pdf = base64.b64encode(pdf_res.content).decode("utf-8")
+                            st.markdown(
+                                f'<iframe src="data:application/pdf;base64,{b64_pdf}" '
+                                f'width="100%" height="600" style="border:1px solid #ccc;border-radius:8px;">'
+                                f'</iframe>',
+                                unsafe_allow_html=True,
+                            )
                             st.download_button(
                                 "📄 PDFをダウンロード",
                                 data=pdf_res.content,
@@ -460,5 +520,6 @@ with tab_print:
                             )
                     except Exception as pdf_err:
                         st.warning(f"スプレッドシートへの反映は完了しましたが、PDF取得中にエラーが発生しました: {pdf_err}")
+                    st.caption("反映済みのため、次に「🔄 データを更新」を押すとこのレコードは一覧から消えます。")
                 else:
                     st.error(f"反映に失敗しました: {res.get('message', '不明なエラー')}")
