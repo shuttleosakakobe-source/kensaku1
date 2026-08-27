@@ -3,6 +3,8 @@
 
 大阪中央店・大阪北店の2拠点で、顧客対応の記録を1件ずつ入力し、
 指定のGoogleスプレッドシートに1行ずつ追記するフォームアプリです。
+アプリを開くと、まず「大阪中央店」「大阪北店」のボタンで拠点を選ぶ画面が表示され、
+選択すると入力・印刷タブの画面に進みます（右上の「🔁 拠点を変更」でいつでも選び直せます）。
 「顧客コード」を入力して「検索」ボタンを押すと、拠点ごとの顧客マスタシートを検索し、
 「加盟店名」「加盟店コード」「顧客名」「お客様担当者」「住所」「電話番号」を自動入力します
 （見つからない場合は手入力できます）。
@@ -344,7 +346,30 @@ _pending_toast = st.session_state.pop("_pending_toast", None)
 if _pending_toast:
     st.toast(_pending_toast, icon="✅")
 
-st.title("📝 顧客対応記録フォーム")
+# --- 拠点選択（アプリを開いたら、まずボタンで拠点を選んでから入力フォームに進む） ---
+if "selected_location" not in st.session_state:
+    st.title("📝 顧客対応記録フォーム")
+    st.subheader("拠点を選択してください")
+    loc_cols = st.columns(len(LOCATIONS))
+    for loc_col, loc_name in zip(loc_cols, LOCATIONS):
+        with loc_col:
+            if st.button(loc_name, key=f"pick_location_{loc_name}", type="primary", use_container_width=True):
+                st.session_state["selected_location"] = loc_name
+                st.rerun()
+    st.stop()
+
+location = st.session_state["selected_location"]
+
+title_col, change_col = st.columns([4, 1])
+with title_col:
+    st.title("📝 顧客対応記録フォーム")
+with change_col:
+    st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+    if st.button("🔁 拠点を変更", key="change_location_btn", use_container_width=True):
+        del st.session_state["selected_location"]
+        _clear_entry_form()
+        st.rerun()
+st.caption(f"拠点：**{location}**")
 
 if "【ここにデプロイID" in GAS_URL:
     st.warning(
@@ -361,8 +386,6 @@ with tab_entry:
     st.caption("入力して送信すると、スプレッドシートに1行追加されます。")
 
     # --- 顧客コード検索（「検索」ボタンを押したときだけ検索する） ---
-    location = st.selectbox("拠点 *", LOCATIONS, key="location_select")
-
     code_col, btn_col, clear_col = st.columns([3, 1, 1])
     with code_col:
         customer_code = st.text_input(
