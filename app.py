@@ -50,9 +50,11 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
   大阪中央店 (gid=1628566858): A=加盟店名, B=顧客コード, C=顧客名, E=加盟店コード（2行目からデータ）
 
 印刷用フォーマットシートのセル対応（1ページ最大3件、ブロックは15行おき）:
+  ※ 印刷用テンプレート自体に印字されているラベル（送信日/顧客コード/顧客名/シャトルコード等）
+     に合わせて実データを書き込む。「シャトルコード」欄には加盟店コードを書き込む。
   C1: 加盟店名（ページ共通、書き込み先データのE列に対応）
   各ブロック（1件目は開始行4、2件目は19、3件目は34）の相対位置:
-    startRow+0: A=送信日(○月○日形式、書き込み先A列)  B=加盟店コード(F列)  C=顧客名(G列)  D=顧客コード(D列)
+    startRow+0: A=送信日(○月○日形式、書き込み先A列)  B=顧客コード(D列)  C=顧客名(G列)  D=シャトルコード＝加盟店コード(F列)
     startRow+2: A=住所(I列)  D=担当者名(C列)
     startRow+4: A=お客様担当者(H列)  B=電話番号(J列、先頭0が消えないようテキスト形式で書き込み)  C=サービス内容(K列)
     startRow+6: A=問い合わせ内容(L列)
@@ -79,7 +81,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/AKfycbwI9KONqKyVpxAYBm6CEX6bT4A1rOBOAePA7i1_zWBzHyFEEE8khH0vRGGIM4Aw9VTEnw/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbzljl69QNdbvAUQR0BLz85WjxVrYanQ1RsJG2WveMxX2Z4427TsZcr1ji98tgjJzqyECw/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
@@ -211,9 +213,9 @@ def build_print_matrix(row: dict | None) -> list:
         return matrix
     matrix[0] = [
         _short_date(row.get("タイムスタンプ", "")),
-        row.get("加盟店コード", ""),
-        row.get("顧客名", ""),
         row.get("顧客コード", ""),
+        row.get("顧客名", ""),
+        row.get("加盟店コード", ""),
     ]
     matrix[2] = [row.get("住所", ""), "", "", row.get("担当者名", "")]
     matrix[4] = [row.get("お客様担当者", ""), row.get("電話番号", ""), row.get("サービス内容", ""), ""]
@@ -298,10 +300,8 @@ with tab_entry:
                     st.session_state["customer_name_input"] = result["customer_name"]
                     st.session_state["affiliate_input"] = result["affiliate_name"]
                     st.session_state["affiliate_code_input"] = result["affiliate_code"]
-                else:
-                    st.session_state["customer_name_input"] = ""
-                    st.session_state["affiliate_input"] = ""
-                    st.session_state["affiliate_code_input"] = ""
+                # 見つからなかった場合は、既に入力されている「顧客名」等を消さない
+                # （手入力していた内容が検索失敗で消えて、送信時に「必須」エラーになるのを防ぐ）
                 st.session_state["_lookup_result"] = {
                     "combo": f"{location}:{code}",
                     "found": bool(result),
