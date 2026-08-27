@@ -294,6 +294,21 @@ def build_print_pdf_url(row_end: int, col_end: int = 4) -> str:
     return f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?{query}"
 
 
+# 入力タブのフォーム関連のsession_stateキー一覧（送信後のリセット／クリアボタンの両方で使う）
+ENTRY_FORM_KEYS = (
+    "customer_code_input", "_lookup_result",
+    "name_input", "affiliate_input", "affiliate_code_input", "customer_name_input",
+    "contact_input", "address_input", "phone_input", "service_select",
+    "service_other_input", "inquiry_input", "comment_input",
+)
+
+
+def _clear_entry_form():
+    """入力タブのフォームを全項目クリアする（送信成功時／クリアボタンの両方から呼ばれる）"""
+    for key in ENTRY_FORM_KEYS:
+        st.session_state.pop(key, None)
+
+
 # ------------------------------------------------------------
 # 画面
 # ------------------------------------------------------------
@@ -421,17 +436,15 @@ with tab_entry:
                     st.success(f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）。")
                     # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
                     # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
-                    for key in (
-                        "customer_code_input", "_lookup_result",
-                        "name_input", "affiliate_input", "affiliate_code_input", "customer_name_input",
-                        "contact_input", "address_input", "phone_input", "service_select",
-                        "service_other_input", "inquiry_input", "comment_input",
-                    ):
-                        st.session_state.pop(key, None)
+                    _clear_entry_form()
                     st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error(f"送信に失敗しました: {result.get('message', '不明なエラー')}")
+
+    if st.button("🧹 フォームをクリア", key="clear_form_btn"):
+        _clear_entry_form()
+        st.rerun()
 
 # ============================================================
 # 印刷タブ
