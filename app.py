@@ -79,7 +79,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/【ここにデプロイIDを貼り付け】/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbwI9KONqKyVpxAYBm6CEX6bT4A1rOBOAePA7i1_zWBzHyFEEE8khH0vRGGIM4Aw9VTEnw/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
@@ -256,7 +256,7 @@ def build_print_pdf_url(row_end: int, col_end: int = 4) -> str:
 # ------------------------------------------------------------
 st.title("📝 顧客対応記録フォーム")
 
-if "【ここにデプロイID" in GAS_URL:https://script.google.com/macros/s/AKfycbwI9KONqKyVpxAYBm6CEX6bT4A1rOBOAePA7i1_zWBzHyFEEE8khH0vRGGIM4Aw9VTEnw/exec
+if "【ここにデプロイID" in GAS_URL:
     st.warning(
         "GAS_URL が未設定です。README.md の手順にそって GAS をウェブアプリとしてデプロイし、"
         "発行された URL を app.py 冒頭の GAS_URL に貼り付けてください。"
