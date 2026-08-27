@@ -294,19 +294,23 @@ def build_print_pdf_url(row_end: int, col_end: int = 4) -> str:
     return f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?{query}"
 
 
-# 入力タブのフォーム関連のsession_stateキー一覧（送信後のリセット／クリアボタンの両方で使う）
-ENTRY_FORM_KEYS = (
-    "customer_code_input", "_lookup_result",
-    "name_input", "affiliate_input", "affiliate_code_input", "customer_name_input",
-    "contact_input", "address_input", "phone_input", "service_select",
-    "service_other_input", "inquiry_input", "comment_input",
-)
+# 入力タブのフォームは「バージョン番号」をキーに含めることでクリアする。
+# session_state.pop() でウィジェットの値を消そうとすると、ブラウザ側がまだ古い値を
+# 保持しているタイミング次第で消えたり消えなかったりする現象があったため、
+# 送信成功時・クリアボタンの両方で form_version を1つ増やし、
+# 「まったく新しいキーを持つ、まっさらなウィジェット」を作り直す方式にしている。
+if "form_version" not in st.session_state:
+    st.session_state["form_version"] = 0
+
+
+def _field_key(base: str) -> str:
+    return f"{base}_{st.session_state['form_version']}"
 
 
 def _clear_entry_form():
     """入力タブのフォームを全項目クリアする（送信成功時／クリアボタンの両方から呼ばれる）"""
-    for key in ENTRY_FORM_KEYS:
-        st.session_state.pop(key, None)
+    st.session_state["form_version"] += 1
+    st.session_state.pop("_lookup_result", None)
 
 
 # ------------------------------------------------------------
@@ -331,14 +335,22 @@ with tab_entry:
     # --- 顧客コード検索（「検索」ボタンを押したときだけ検索する） ---
     location = st.selectbox("拠点 *", LOCATIONS, key="location_select")
 
-    code_col, btn_col = st.columns([3, 1])
+    code_col, btn_col, clear_col = st.columns([3, 1, 1])
     with code_col:
         customer_code = st.text_input(
-            "顧客コード", key="customer_code_input", help="入力後に「検索」を押すと加盟店名・加盟店コード・顧客名を自動検索します"
+            "顧客コード", key=_field_key("customer_code_input"),
+            help="入力後に「検索」を押すと加盟店名・加盟店コード・顧客名を自動検索します",
         )
     with btn_col:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
         search_clicked = st.button("🔍 検索", key="lookup_btn", use_container_width=True)
+    with clear_col:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        clear_clicked = st.button("🧹 クリア", key="clear_form_btn", use_container_width=True)
+
+    if clear_clicked:
+        _clear_entry_form()
+        st.rerun()
 
     if search_clicked:
         code = customer_code.strip()
@@ -353,9 +365,9 @@ with tab_entry:
                 st.session_state.pop("_lookup_result", None)
             else:
                 if result:
-                    st.session_state["customer_name_input"] = result["customer_name"]
-                    st.session_state["affiliate_input"] = result["affiliate_name"]
-                    st.session_state["affiliate_code_input"] = result["affiliate_code"]
+                    st.session_state[_field_key("customer_name_input")] = result["customer_name"]
+                    st.session_state[_field_key("affiliate_input")] = result["affiliate_name"]
+                    st.session_state[_field_key("affiliate_code_input")] = result["affiliate_code"]
                 # 見つからなかった場合は、既に入力されている「顧客名」等を消さない
                 # （手入力していた内容が検索失敗で消えて、送信時に「必須」エラーになるのを防ぐ）
                 st.session_state["_lookup_result"] = {
@@ -383,21 +395,21 @@ with tab_entry:
     # 組み合わせで「表示上は値が入っているのに送信時に空扱いされる」不具合が
     # 起きることがあるため、送信後のクリアは全項目を自前で行う（下記参照）。
     with st.form("entry_form", clear_on_submit=False):
-        name = st.text_input("担当者名 *", help="対応した担当者の名前", key="name_input")
-        affiliate = st.text_input("加盟店名", key="affiliate_input")
-        affiliate_code = st.text_input("加盟店コード", key="affiliate_code_input")
-        customer_name = st.text_input("顧客名 *", key="customer_name_input")
-        customer_contact = st.text_input("お客様担当者", key="contact_input")
-        address = st.text_input("住所", key="address_input")
-        phone = st.text_input("電話番号", key="phone_input")
-        service = st.selectbox("サービス内容 *", SERVICE_OPTIONS, key="service_select")
+        name = st.text_input("担当者名 *", help="対応した担当者の名前", key=_field_key("name_input"))
+        affiliate = st.text_input("加盟店名", key=_field_key("affiliate_input"))
+        affiliate_code = st.text_input("加盟店コード", key=_field_key("affiliate_code_input"))
+        customer_name = st.text_input("顧客名 *", key=_field_key("customer_name_input"))
+        customer_contact = st.text_input("お客様担当者", key=_field_key("contact_input"))
+        address = st.text_input("住所", key=_field_key("address_input"))
+        phone = st.text_input("電話番号", key=_field_key("phone_input"))
+        service = st.selectbox("サービス内容 *", SERVICE_OPTIONS, key=_field_key("service_select"))
 
         service_other = ""
         if service == "その他（自由記述）":
-            service_other = st.text_input("サービス内容（自由記述） *", key="service_other_input")
+            service_other = st.text_input("サービス内容（自由記述） *", key=_field_key("service_other_input"))
 
-        inquiry_content = st.text_area("問い合わせ内容", key="inquiry_input")
-        comment = st.text_area("コメント", key="comment_input")
+        inquiry_content = st.text_area("問い合わせ内容", key=_field_key("inquiry_input"))
+        comment = st.text_area("コメント", key=_field_key("comment_input"))
 
         submitted = st.form_submit_button("送信", type="primary", use_container_width=True)
 
@@ -441,10 +453,6 @@ with tab_entry:
                     st.rerun()
                 else:
                     st.error(f"送信に失敗しました: {result.get('message', '不明なエラー')}")
-
-    if st.button("🧹 フォームをクリア", key="clear_form_btn"):
-        _clear_entry_form()
-        st.rerun()
 
 # ============================================================
 # 印刷タブ
