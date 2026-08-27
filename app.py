@@ -52,6 +52,8 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
 印刷用フォーマットシートのセル対応（1ページ最大3件、ブロックは15行おき）:
   ※ 印刷用テンプレート自体に印字されているラベル（送信日/顧客コード/顧客名/シャトルコード等）
      に合わせて実データを書き込む。「シャトルコード」欄には加盟店コードを書き込む。
+  ※ テンプレートの見出しの黒帯（各ブロックの相対1,3,5,7行目）は書き込み対象に含めない
+     （実データが入る行だけをピンポイントで書き込み、見出しを消してしまわないようにする）。
   C1: 加盟店名（ページ共通、書き込み先データのE列に対応）
   各ブロック（1件目は開始行4、2件目は19、3件目は34）の相対位置:
     startRow+0: A=送信日(○月○日形式、書き込み先A列)  B=顧客コード(D列)  C=顧客名(G列)  D=シャトルコード＝加盟店コード(F列)
@@ -81,7 +83,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/AKfycbzljl69QNdbvAUQR0BLz85WjxVrYanQ1RsJG2WveMxX2Z4427TsZcr1ji98tgjJzqyECw/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbwe_r9uNJR_eHl_2cK3MiiPtcVGtYrn1E2hsI-9AlALpH6ApXc7flGpJw_PGu5PaYlArg/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
@@ -205,23 +207,26 @@ def _short_date(timestamp: str) -> str:
     return date_part
 
 
-def build_print_matrix(row: dict | None) -> list:
-    """1件分のレコードを、ブロック開始行を起点にした9行×4列の行列に変換する"""
-    blank = ["", "", "", ""]
-    matrix = [blank[:] for _ in range(9)]
+def build_print_rows(row: dict | None) -> list:
+    """1件分のレコードを、ブロック開始行からの相対オフセットと書き込む4列分の値のペアに変換する。
+    テンプレートの見出しの黒帯（相対1,3,5,7行目）は含めない（誤って消してしまわないため）。"""
     if row is None:
-        return matrix
-    matrix[0] = [
-        _short_date(row.get("タイムスタンプ", "")),
-        row.get("顧客コード", ""),
-        row.get("顧客名", ""),
-        row.get("加盟店コード", ""),
+        row = {}
+    return [
+        {
+            "offset": 0,
+            "values": [
+                _short_date(row.get("タイムスタンプ", "")),
+                row.get("顧客コード", ""),
+                row.get("顧客名", ""),
+                row.get("加盟店コード", ""),
+            ],
+        },
+        {"offset": 2, "values": [row.get("住所", ""), "", "", row.get("担当者名", "")]},
+        {"offset": 4, "values": [row.get("お客様担当者", ""), row.get("電話番号", ""), row.get("サービス内容", ""), ""]},
+        {"offset": 6, "values": [row.get("問い合わせ内容", ""), "", "", ""]},
+        {"offset": 8, "values": [row.get("コメント", ""), "", "", ""]},
     ]
-    matrix[2] = [row.get("住所", ""), "", "", row.get("担当者名", "")]
-    matrix[4] = [row.get("お客様担当者", ""), row.get("電話番号", ""), row.get("サービス内容", ""), ""]
-    matrix[6] = [row.get("問い合わせ内容", ""), "", "", ""]
-    matrix[8] = [row.get("コメント", ""), "", "", ""]
-    return matrix
 
 
 def build_print_pdf_url(row_end: int, col_end: int = 4) -> str:
@@ -423,7 +428,7 @@ with tab_print:
                 for slot in range(3):
                     start_row = 4 + slot * 15
                     row_dict = chunk.iloc[slot].to_dict() if slot < len(chunk) else None
-                    blocks.append({"startRow": start_row, "matrix": build_print_matrix(row_dict)})
+                    blocks.append({"startRow": start_row, "rows": build_print_rows(row_dict)})
 
                 with st.spinner("印刷用フォーマットシートへ反映しています..."):
                     res = sync_print_data(selected_affiliate, blocks)
