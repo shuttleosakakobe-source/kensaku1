@@ -92,7 +92,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/【ここにデプロイIDを貼り付け】/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbwAh5UbG_TTu5MsG6IOd03nbEFLScprhC12QKWw7ud1ApMW9-s3JAQ3hmeOcHIdGWuC2Q/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
