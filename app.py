@@ -3,7 +3,7 @@
 
 大阪中央店・大阪北店の2拠点で、顧客対応の記録を1件ずつ入力し、
 指定のGoogleスプレッドシートに1行ずつ追記するフォームアプリです。
-「顧客コード」を入力すると、拠点ごとの顧客マスタシートを検索し、
+「顧客コード」を入力して「検索」ボタンを押すと、拠点ごとの顧客マスタシートを検索し、
 「加盟店名」「加盟店コード」「顧客名」を自動入力します（見つからない場合は手入力できます）。
 また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成できます。
 
@@ -50,13 +50,13 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
   大阪中央店 (gid=1628566858): A=加盟店名, B=顧客コード, C=顧客名, E=加盟店コード（2行目からデータ）
 
 印刷用フォーマットシートのセル対応（1ページ最大3件、ブロックは15行おき）:
-  C1: 加盟店名（ページ共通）
+  C1: 加盟店名（ページ共通、書き込み先データのE列に対応）
   各ブロック（1件目は開始行4、2件目は19、3件目は34）の相対位置:
-    startRow+0: A=送信日(月/日) B=加盟店コード C=顧客名 D=顧客コード
-    startRow+2: A=住所 B=電話番号 D=担当者名
-    startRow+4: A=お客様担当者 C=サービス内容
-    startRow+6: A=問い合わせ内容
-    startRow+8: A=コメント
+    startRow+0: A=送信日(○月○日形式、書き込み先A列)  B=加盟店コード(F列)  C=顧客名(G列)  D=顧客コード(D列)
+    startRow+2: A=住所(I列)  D=担当者名(C列)
+    startRow+4: A=お客様担当者(H列)  B=電話番号(J列、先頭0が消えないようテキスト形式で書き込み)  C=サービス内容(K列)
+    startRow+6: A=問い合わせ内容(L列)
+    startRow+8: A=コメント(M列)
 
 事前準備 (README.md を参照):
   1. スプレッドシートを「リンクを知っている全員が閲覧者」で共有する
@@ -79,7 +79,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/AKfycbzzesJCutR6o9-_LEE-ytaoYlmEjOfpVo7FWD1igH33GgwgVaNXRp4EHpdXPTosqupxcw/exec"
+GAS_URL = "https://script.google.com/macros/s/【ここにデプロイIDを貼り付け】/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
@@ -190,11 +190,16 @@ def sync_print_data(affiliate_name: str, blocks: list) -> dict:
 # 印刷用データ組み立て
 # ------------------------------------------------------------
 def _short_date(timestamp: str) -> str:
-    """'yyyy-MM-dd HH:mm:ss' 形式のタイムスタンプから 'MM/DD' を取り出す"""
+    """'yyyy-MM-dd HH:mm:ss' 形式のタイムスタンプから '○月○日' の形式を取り出す"""
     date_part = (timestamp or "").split(" ")[0]
     parts = date_part.split("-")
     if len(parts) == 3:
-        return f"{parts[1]}/{parts[2]}"
+        try:
+            month = int(parts[1])
+            day = int(parts[2])
+            return f"{month}月{day}日"
+        except ValueError:
+            pass
     return date_part
 
 
@@ -210,8 +215,8 @@ def build_print_matrix(row: dict | None) -> list:
         row.get("顧客名", ""),
         row.get("顧客コード", ""),
     ]
-    matrix[2] = [row.get("住所", ""), row.get("電話番号", ""), "", row.get("担当者名", "")]
-    matrix[4] = [row.get("お客様担当者", ""), "", row.get("サービス内容", ""), ""]
+    matrix[2] = [row.get("住所", ""), "", "", row.get("担当者名", "")]
+    matrix[4] = [row.get("お客様担当者", ""), row.get("電話番号", ""), row.get("サービス内容", ""), ""]
     matrix[6] = [row.get("問い合わせ内容", ""), "", "", ""]
     matrix[8] = [row.get("コメント", ""), "", "", ""]
     return matrix
@@ -251,7 +256,7 @@ def build_print_pdf_url(row_end: int, col_end: int = 4) -> str:
 # ------------------------------------------------------------
 st.title("📝 顧客対応記録フォーム")
 
-if "【ここにデプロイID" in GAS_URL:
+if "【ここにデプロイID" in GAS_URL:https://script.google.com/macros/s/AKfycbwI9KONqKyVpxAYBm6CEX6bT4A1rOBOAePA7i1_zWBzHyFEEE8khH0vRGGIM4Aw9VTEnw/exec
     st.warning(
         "GAS_URL が未設定です。README.md の手順にそって GAS をウェブアプリとしてデプロイし、"
         "発行された URL を app.py 冒頭の GAS_URL に貼り付けてください。"
@@ -265,39 +270,54 @@ tab_entry, tab_print = st.tabs(["📝 入力", "🖨️ 印刷"])
 with tab_entry:
     st.caption("入力して送信すると、スプレッドシートに1行追加されます。")
 
-    # --- 顧客コード検索（フォームの外に置き、入力のたびに即検索する） ---
+    # --- 顧客コード検索（「検索」ボタンを押したときだけ検索する） ---
     location = st.selectbox("拠点 *", LOCATIONS, key="location_select")
-    customer_code = st.text_input(
-        "顧客コード", key="customer_code_input", help="入力すると加盟店名・加盟店コード・顧客名を自動検索します"
-    )
 
-    combo_key = f"{location}:{customer_code.strip()}"
-    if combo_key != st.session_state.get("_last_lookup_combo"):
-        st.session_state["_last_lookup_combo"] = combo_key
-        if customer_code.strip():
+    code_col, btn_col = st.columns([3, 1])
+    with code_col:
+        customer_code = st.text_input(
+            "顧客コード", key="customer_code_input", help="入力後に「検索」を押すと加盟店名・加盟店コード・顧客名を自動検索します"
+        )
+    with btn_col:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        search_clicked = st.button("🔍 検索", key="lookup_btn", use_container_width=True)
+
+    if search_clicked:
+        code = customer_code.strip()
+        if not code:
+            st.warning("顧客コードを入力してから「検索」を押してください。")
+            st.session_state.pop("_lookup_result", None)
+        else:
             try:
-                result = lookup_customer(location, customer_code)
-            except Exception:
-                result = None
-            if result:
-                st.session_state["customer_name_input"] = result["customer_name"]
-                st.session_state["affiliate_input"] = result["affiliate_name"]
-                st.session_state["affiliate_code_input"] = result["affiliate_code"]
+                result = lookup_customer(location, code)
+            except Exception as e:
+                st.error(f"顧客マスタの読み込みに失敗しました: {e}")
+                st.session_state.pop("_lookup_result", None)
             else:
-                st.session_state["customer_name_input"] = ""
-                st.session_state["affiliate_input"] = ""
-                st.session_state["affiliate_code_input"] = ""
+                if result:
+                    st.session_state["customer_name_input"] = result["customer_name"]
+                    st.session_state["affiliate_input"] = result["affiliate_name"]
+                    st.session_state["affiliate_code_input"] = result["affiliate_code"]
+                else:
+                    st.session_state["customer_name_input"] = ""
+                    st.session_state["affiliate_input"] = ""
+                    st.session_state["affiliate_code_input"] = ""
+                st.session_state["_lookup_result"] = {
+                    "combo": f"{location}:{code}",
+                    "found": bool(result),
+                    "affiliate_name": result["affiliate_name"] if result else "",
+                    "affiliate_code": result["affiliate_code"] if result else "",
+                    "customer_name": result["customer_name"] if result else "",
+                }
 
-    if customer_code.strip():
-        try:
-            found = lookup_customer(location, customer_code)
-        except Exception as e:
-            found = None
-            st.error(f"顧客マスタの読み込みに失敗しました: {e}")
-        if found:
+    # 検索ボタンを押した時点のコード・拠点のままなら、その結果メッセージを表示し続ける
+    # （検索後に顧客コードや拠点を変更した場合は、再度「検索」を押すまで表示しない）
+    lookup_result = st.session_state.get("_lookup_result")
+    if lookup_result and lookup_result["combo"] == f"{location}:{customer_code.strip()}":
+        if lookup_result["found"]:
             st.success(
-                f"✓ 顧客情報が見つかりました：{found['affiliate_name']} / "
-                f"{found['affiliate_code']} / {found['customer_name']}"
+                f"✓ 顧客情報が見つかりました：{lookup_result['affiliate_name']} / "
+                f"{lookup_result['affiliate_code']} / {lookup_result['customer_name']}"
             )
         else:
             st.warning("該当する顧客コードが見つかりませんでした。加盟店名・加盟店コード・顧客名は手入力してください。")
@@ -355,7 +375,7 @@ with tab_entry:
                 if result.get("status") == "success":
                     st.success(f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）。")
                     st.session_state.pop("customer_code_input", None)
-                    st.session_state.pop("_last_lookup_combo", None)
+                    st.session_state.pop("_lookup_result", None)
                     st.cache_data.clear()
                     st.rerun()
                 else:
