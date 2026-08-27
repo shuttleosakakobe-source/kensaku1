@@ -316,6 +316,13 @@ def _clear_entry_form():
 # ------------------------------------------------------------
 # 画面
 # ------------------------------------------------------------
+# 送信直後は st.rerun() で画面がすぐ再描画されるため、その場で st.toast() を呼んでも
+# 表示される前に消えてしまう。次の実行の一番最初でポップアップ表示するように、
+# 「表示待ちのメッセージ」を session_state 経由で1回だけ持ち越す。
+_pending_toast = st.session_state.pop("_pending_toast", None)
+if _pending_toast:
+    st.toast(_pending_toast, icon="✅")
+
 st.title("📝 顧客対応記録フォーム")
 
 if "【ここにデプロイID" in GAS_URL:
@@ -445,7 +452,11 @@ with tab_entry:
                 }
                 result = submit_record(record)
                 if result.get("status") == "success":
-                    st.success(f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）。")
+                    # 直後に st.rerun() するのでその場のメッセージはすぐ消えてしまう。
+                    # 次の画面表示の一番最初でポップアップ（トースト）表示されるようにする。
+                    st.session_state["_pending_toast"] = (
+                        f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）"
+                    )
                     # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
                     # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
                     _clear_entry_form()
