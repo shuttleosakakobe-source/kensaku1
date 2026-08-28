@@ -6,8 +6,9 @@
 アプリを開くと、まず「大阪中央店」「大阪北店」のボタンで拠点を選ぶ画面が表示され、
 選択すると入力・印刷タブの画面に進みます（右上の「🔁 拠点を変更」でいつでも選び直せます）。
 「顧客コード」を入力して「検索」ボタンを押すと、拠点ごとの顧客マスタシートを検索し、
-「加盟店名」「加盟店コード」「顧客名」「お客様担当者」「住所」「電話番号」を自動入力します
-（見つからない場合は手入力できます）。
+「加盟店名」「加盟店コード」「顧客名」「担当者名」「住所」「電話番号」を自動入力します
+（見つからない場合は手入力できます。「お客様担当者」欄は顧客マスタには無いため、
+毎回手入力する項目です）。
 また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成してダウンロードできます
 （印刷タブはパスワード（初期値: PRINT_PASSWORD定数）でロックされています）。
 反映が完了したレコードは書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの
@@ -51,11 +52,15 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
   L: 問い合わせ内容
   M: コメント
 
-顧客マスタ（顧客コードから顧客名・加盟店名・加盟店コード・お客様担当者・住所・電話番号を検索する
+顧客マスタ（顧客コードから顧客名・加盟店名・加盟店コード・担当者名・住所・電話番号を検索する
 参照元、同じスプレッドシート内。D列は未使用）:
   大阪北店   (gid=1050026582): A=加盟店名, B=顧客コード, C=顧客名, E=加盟店コード,
-             F=お客様担当者, G=住所, H=電話番号（2行目からデータ）
+             F=担当者名, G=住所, H=電話番号（2行目からデータ）
   大阪中央店 (gid=1628566858): 大阪北店と同じ列構成
+
+  ※ F列（担当者名）で検索されると、入力フォームの「担当者名」欄（書き込み先C列、対応した
+    担当者）に自動入力されます。「お客様担当者」欄（書き込み先H列）は顧客マスタに列が無いため
+    自動入力されず、毎回手入力する項目です。
 
 なお「入力フォームの並び順」はアプリ側だけの表示上の並びで、書き込み先スプレッドシートの
 列構成（上記）には影響しません。フォームでは「お客様担当者」を「電話番号」と「サービス内容」の
@@ -95,7 +100,7 @@ import streamlit as st
 st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝", layout="centered")
 
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
-GAS_URL = "https://script.google.com/macros/s/AKfycbwAh5UbG_TTu5MsG6IOd03nbEFLScprhC12QKWw7ud1ApMW9-s3JAQ3hmeOcHIdGWuC2Q/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbz4KNqEve3j17lTicAMbMy5PaqyNUZXtYhESL0mxjlTyjVgr0KeDKpEm7t4j8NFdtfzzQ/exec"
 # ▲▲▲ ここまで ▲▲▲
 
 # 🖨️ 印刷タブのロック用パスワード（変更したい場合はここを書き換えてください）
@@ -119,15 +124,15 @@ LOCATIONS = ["大阪中央店", "大阪北店"]
 SERVICE_OPTIONS = ["サービスマスター", "ターミニックス", "メリーメイド", "その他（自由記述）"]
 
 # 拠点ごとの顧客マスタ参照設定（列は0始まりのインデックス: A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7）
-# F=お客様担当者, G=住所, H=電話番号 を追加（両店舗とも同じ列構成）
+# F=担当者名（対応した担当者。検索すると入力フォームの「担当者名」欄に入る）, G=住所, H=電話番号
 MASTER_CONFIG = {
     "大阪北店": {
         "gid": 1050026582, "affiliate_name_col": 0, "code_col": 1, "name_col": 2, "affiliate_code_col": 4,
-        "contact_col": 5, "address_col": 6, "phone_col": 7,
+        "staff_name_col": 5, "address_col": 6, "phone_col": 7,
     },
     "大阪中央店": {
         "gid": 1628566858, "affiliate_name_col": 0, "code_col": 1, "name_col": 2, "affiliate_code_col": 4,
-        "contact_col": 5, "address_col": 6, "phone_col": 7,
+        "staff_name_col": 5, "address_col": 6, "phone_col": 7,
     },
 }
 
@@ -151,7 +156,7 @@ def _fetch_csv(gid: int) -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def load_master(location: str) -> dict:
     """拠点の顧客マスタを {顧客コード: {customer_name, affiliate_name, affiliate_code,
-    customer_contact, address, phone}} の形で読み込む"""
+    staff_name, address, phone}} の形で読み込む"""
     cfg = MASTER_CONFIG[location]
     df = _fetch_csv(cfg["gid"])  # 1行目は見出しとして自動的に読み飛ばされる
     df = df.fillna("")
@@ -159,7 +164,7 @@ def load_master(location: str) -> dict:
     lookup = {}
     max_col = max(
         cfg["affiliate_name_col"], cfg["code_col"], cfg["name_col"], cfg["affiliate_code_col"],
-        cfg["contact_col"], cfg["address_col"], cfg["phone_col"],
+        cfg["staff_name_col"], cfg["address_col"], cfg["phone_col"],
     )
     if df.shape[1] <= max_col:
         return lookup
@@ -172,7 +177,7 @@ def load_master(location: str) -> dict:
             "customer_name": str(row.iloc[cfg["name_col"]]).strip(),
             "affiliate_name": str(row.iloc[cfg["affiliate_name_col"]]).strip(),
             "affiliate_code": str(row.iloc[cfg["affiliate_code_col"]]).strip(),
-            "customer_contact": str(row.iloc[cfg["contact_col"]]).strip(),
+            "staff_name": str(row.iloc[cfg["staff_name_col"]]).strip(),
             "address": str(row.iloc[cfg["address_col"]]).strip(),
             "phone": str(row.iloc[cfg["phone_col"]]).strip(),
         }
@@ -394,7 +399,7 @@ with tab_entry:
     with code_col:
         customer_code = st.text_input(
             "顧客コード", key=_field_key("customer_code_input"),
-            help="入力後に「検索」を押すと加盟店名・加盟店コード・顧客名・お客様担当者・住所・電話番号を自動検索します",
+            help="入力後に「検索」を押すと加盟店名・加盟店コード・顧客名・担当者名・住所・電話番号を自動検索します",
         )
     with btn_col:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
@@ -423,7 +428,7 @@ with tab_entry:
                     st.session_state[_field_key("customer_name_input")] = result["customer_name"]
                     st.session_state[_field_key("affiliate_input")] = result["affiliate_name"]
                     st.session_state[_field_key("affiliate_code_input")] = result["affiliate_code"]
-                    st.session_state[_field_key("contact_input")] = result["customer_contact"]
+                    st.session_state[_field_key("name_input")] = result["staff_name"]
                     st.session_state[_field_key("address_input")] = result["address"]
                     st.session_state[_field_key("phone_input")] = result["phone"]
                 # 見つからなかった場合は、既に入力されている「顧客名」等を消さない
@@ -444,12 +449,12 @@ with tab_entry:
             st.success(
                 f"✓ 顧客情報が見つかりました：{lookup_result['affiliate_name']} / "
                 f"{lookup_result['affiliate_code']} / {lookup_result['customer_name']}"
-                "（お客様担当者・住所・電話番号も自動入力しました）"
+                "（担当者名・住所・電話番号も自動入力しました）"
             )
         else:
             st.warning(
                 "該当する顧客コードが見つかりませんでした。"
-                "加盟店名・加盟店コード・顧客名・お客様担当者・住所・電話番号は手入力してください。"
+                "加盟店名・加盟店コード・顧客名・担当者名・住所・電話番号は手入力してください。"
             )
 
     # clear_on_submit は使わない。加盟店名・加盟店コード・顧客名を検索結果で
