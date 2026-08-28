@@ -8,7 +8,8 @@
 「顧客コード」を入力して「検索」ボタンを押すと、拠点ごとの顧客マスタシートを検索し、
 「加盟店名」「加盟店コード」「顧客名」「お客様担当者」「住所」「電話番号」を自動入力します
 （見つからない場合は手入力できます）。
-また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成してダウンロードできます。
+また、加盟店ごとに最大3件をまとめて印刷用フォーマットに反映し、PDFを作成してダウンロードできます
+（印刷タブはパスワード（初期値: PRINT_PASSWORD定数）でロックされています）。
 反映が完了したレコードは書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの
 一覧に表示されなくなります（「印刷済みも表示する」で再表示可能）。
 
@@ -96,6 +97,9 @@ st.set_page_config(page_title="顧客対応記録フォーム", page_icon="📝"
 # ▼▼▼ ここを、デプロイしたGASウェブアプリのURLに書き換えてください ▼▼▼
 GAS_URL = "https://script.google.com/macros/s/AKfycbwAh5UbG_TTu5MsG6IOd03nbEFLScprhC12QKWw7ud1ApMW9-s3JAQ3hmeOcHIdGWuC2Q/exec"
 # ▲▲▲ ここまで ▲▲▲
+
+# 🖨️ 印刷タブのロック用パスワード（変更したい場合はここを書き換えてください）
+PRINT_PASSWORD = "4645"
 
 SPREADSHEET_ID = "1w7voPP_y3gKVILOw-Nz9odn9ZC4q32TlGJ0ZnO5Y-0U"
 TARGET_GID = 0  # 書き込み先シート（gid=0）
@@ -520,6 +524,31 @@ with tab_entry:
 # 印刷タブ
 # ============================================================
 with tab_print:
+    # --- パスワードロック（解除するまで印刷タブの中身は表示しない） ---
+    if not st.session_state.get("print_unlocked"):
+        st.subheader("🔒 印刷ページはロックされています")
+        pw_col, unlock_col = st.columns([3, 1])
+        with pw_col:
+            pw_input = st.text_input(
+                "パスワード", type="password", key="print_password_input",
+                label_visibility="collapsed", placeholder="パスワードを入力",
+            )
+        with unlock_col:
+            unlock_clicked = st.button("🔓 解除", key="print_unlock_btn", use_container_width=True)
+        if unlock_clicked:
+            if pw_input == PRINT_PASSWORD:
+                st.session_state["print_unlocked"] = True
+                st.rerun()
+            else:
+                st.error("パスワードが違います。")
+        st.stop()
+
+    lock_spacer, lock_col = st.columns([4, 1])
+    with lock_col:
+        if st.button("🔒 ロック", key="print_lock_btn", use_container_width=True):
+            st.session_state["print_unlocked"] = False
+            st.rerun()
+
     st.caption("加盟店を選ぶと、その加盟店のデータを最大3件ずつ印刷用フォーマットに反映してPDFを作成します。")
     st.caption("印刷済み（N列にチェック）のレコードは、一覧から自動的に非表示になります。")
 
