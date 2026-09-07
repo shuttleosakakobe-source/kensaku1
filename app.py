@@ -14,6 +14,10 @@
 反映が完了したレコードは書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの
 一覧に表示されなくなります（「印刷済みも表示する」で再表示可能）。
 
+「送信」ボタンの二重送信防止: 連打や通信の遅延で送信イベントが複数回届いても、直前に
+送信した内容とまったく同じレコードが10秒以内にもう一度送信されようとした場合は、実際の
+スプレッドシートへの書き込み（GASへのPOST）はスキップし、案内メッセージだけ表示します。
+
 【このバージョンの特徴】
 Google CloudでのAPI有効化・サービスアカウント発行は一切不要です。
   - 書き込み: GAS（Google Apps Script）をウェブアプリとしてデプロイし、
@@ -89,6 +93,7 @@ Google CloudでのAPI有効化・サービスアカウント発行は一切不�
 
 import io
 import json
+import time
 
 import pandas as pd
 import requests
@@ -510,20 +515,40 @@ with tab_entry:
                     "inquiryContent": inquiry_content.strip(),
                     "comment": comment.strip(),
                 }
-                result = submit_record(record)
-                if result.get("status") == "success":
-                    # 直後に st.rerun() するのでその場のメッセージはすぐ消えてしまう。
-                    # 次の画面表示の一番最初でポップアップ（トースト）表示されるようにする。
+                # --- 二重送信防止 ---
+                # 「送信」ボタンを連打したり、通信が遅いタイミングでもう一度押したりすると、
+                # ブラウザ側から送信イベントが複数回届き、同じ内容がスプレッドシートに
+                # 2行以上書き込まれてしまうことがある。直前に送信した内容とまったく同じ
+                # レコードが、短時間（10秒以内）にもう一度送信されようとした場合は、
+                # 実際の送信（GASへのPOST）は行わず、直前の送信結果をそのまま案内する。
+                now = time.time()
+                last_record = st.session_state.get("_last_submitted_record")
+                last_time = st.session_state.get("_last_submitted_time", 0)
+                is_duplicate = (last_record == record) and (now - last_time < 10)
+
+                if is_duplicate:
                     st.session_state["_pending_toast"] = (
-                        f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）"
+                        f"登録しました（{location} / {customer_name}）"
                     )
-                    # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
-                    # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
                     _clear_entry_form()
-                    st.cache_data.clear()
                     st.rerun()
                 else:
-                    st.error(f"送信に失敗しました: {result.get('message', '不明なエラー')}")
+                    result = submit_record(record)
+                    if result.get("status") == "success":
+                        st.session_state["_last_submitted_record"] = record
+                        st.session_state["_last_submitted_time"] = now
+                        # 直後に st.rerun() するのでその場のメッセージはすぐ消えてしまう。
+                        # 次の画面表示の一番最初でポップアップ（トースト）表示されるようにする。
+                        st.session_state["_pending_toast"] = (
+                            f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）"
+                        )
+                        # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
+                        # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
+                        _clear_entry_form()
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"送信に失敗しました: {result.get('message', '不明なエラー')}")
 
 # ============================================================
 # 印刷タブ
