@@ -14,9 +14,13 @@
 反映が完了したレコードは書き込み先シートのN列（印刷済）に自動でチェックが入り、以降は印刷タブの
 一覧に表示されなくなります（「印刷済みも表示する」で再表示可能）。
 
-「送信」ボタンの二重送信防止: 連打や通信の遅延で送信イベントが複数回届いても、直前に
-送信した内容とまったく同じレコードが10秒以内にもう一度送信されようとした場合は、実際の
-スプレッドシートへの書き込み（GASへのPOST）はスキップし、案内メッセージだけ表示します。
+「送信」ボタンの二重送信防止: GAS側（submitRecord）は受け取ったPOSTを無条件に新しい行として
+追記するだけで、内容の重複判定はしていない（タイムスタンプも毎回サーバー側で新しく採番される
+ため、GAS視点では常に「別の」正当なリクエストに見える）。そのため防止はすべてクライアント側
+（このアプリ）で行う。「送信」を押した瞬間にフォーム全体（入力欄・検索・クリア・送信ボタン）を
+disabled にしてから実際のPOSTを行うことで、連打や通信の遅延があってもGASへのPOSTが複数回
+発生しないようにしている（時間経過に関わらず有効。バックアップとして、直前に成功した内容と
+完全に同じレコードなら再送信しない、という内容ベースの二重チェックも残している）。
 
 【このバージョンの特徴】
 Google CloudでのAPI有効化・サービスアカウント発行は一切不要です。
@@ -399,19 +403,26 @@ tab_entry, tab_print = st.tabs(["📝 入力", "🖨️ 印刷"])
 with tab_entry:
     st.caption("入力して送信すると、スプレッドシートに1行追加されます。")
 
+    # 送信処理中（GASへのPOSTが完了するまで）は、検索・クリアも含めてタブ全体を
+    # ロックする（詳細は下の「二重送信防止」のコメントを参照）。
+    if "is_submitting" not in st.session_state:
+        st.session_state["is_submitting"] = False
+    is_submitting = st.session_state["is_submitting"]
+
     # --- 顧客コード検索（「検索」ボタンを押したときだけ検索する） ---
     code_col, btn_col, clear_col = st.columns([3, 1, 1])
     with code_col:
         customer_code = st.text_input(
             "顧客コード", key=_field_key("customer_code_input"),
             help="入力後に「検索」を押すと加盟店名・加盟店コード・顧客名・担当者名・住所・電話番号を自動検索します",
+            disabled=is_submitting,
         )
     with btn_col:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-        search_clicked = st.button("🔍 検索", key="lookup_btn", use_container_width=True)
+        search_clicked = st.button("🔍 検索", key="lookup_btn", use_container_width=True, disabled=is_submitting)
     with clear_col:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-        clear_clicked = st.button("🧹 クリア", key="clear_form_btn", use_container_width=True)
+        clear_clicked = st.button("🧹 クリア", key="clear_form_btn", use_container_width=True, disabled=is_submitting)
 
     if clear_clicked:
         _clear_entry_form()
@@ -462,30 +473,47 @@ with tab_entry:
                 "加盟店名・加盟店コード・顧客名・担当者名・住所・電話番号は手入力してください。"
             )
 
+    # --- 二重送信防止（送信中はフォーム全体をロックする） ---
+    # GAS側（submitRecord）は受け取ったPOSTを無条件に新しい行として追記するだけで、
+    # 内容が同じかどうかの判定はしていない（タイムスタンプも毎回サーバー側で新しく
+    # 採番されるため、GAS視点では常に「別の」正当なリクエストに見える）。
+    # そのため、重複したPOSTがGASに届かないよう、クライアント側（このアプリ）で
+    # 確実にブロックする必要がある。
+    #   1. 「送信」を押した瞬間に is_submitting を立てて即座に再描画し、ボタン自体を
+    #      押せない状態（disabled）にしてから、実際のGASへの送信を行う。
+    #      → 連打やタップの誤反応があっても、ボタンが無効化された後のクリックは
+    #        ブラウザ側で受け付けられなくなる。
+    #   2. 送信中は入力欄もすべて disabled にし、内容を書き換えられないようにする
+    #      （is_submitting はタブの先頭で既に取得済み）。
+    #   3. 送信が完了するまでの一瞬の間に複数の送信イベントがサーバーに届いてしまう
+    #      ケースに備え、直前に成功した内容と完全に同じレコードなら、時間の経過に
+    #      関わらず再送信しない（内容ベースの二重チェックをバックアップとして残す）。
+
     # clear_on_submit は使わない。加盟店名・加盟店コード・顧客名を検索結果で
     # あらかじめ session_state にセットしている都合上、clear_on_submit との
     # 組み合わせで「表示上は値が入っているのに送信時に空扱いされる」不具合が
     # 起きることがあるため、送信後のクリアは全項目を自前で行う（下記参照）。
     with st.form("entry_form", clear_on_submit=False):
-        name = st.text_input("担当者名 *", help="対応した担当者の名前", key=_field_key("name_input"))
-        affiliate = st.text_input("加盟店名", key=_field_key("affiliate_input"))
-        affiliate_code = st.text_input("加盟店コード", key=_field_key("affiliate_code_input"))
-        customer_name = st.text_input("顧客名 *", key=_field_key("customer_name_input"))
-        address = st.text_input("住所", key=_field_key("address_input"))
-        phone = st.text_input("電話番号", key=_field_key("phone_input"))
-        customer_contact = st.text_input("お客様担当者", key=_field_key("contact_input"))
-        service = st.selectbox("サービス内容 *", SERVICE_OPTIONS, key=_field_key("service_select"))
+        name = st.text_input("担当者名 *", help="対応した担当者の名前", key=_field_key("name_input"), disabled=is_submitting)
+        affiliate = st.text_input("加盟店名", key=_field_key("affiliate_input"), disabled=is_submitting)
+        affiliate_code = st.text_input("加盟店コード", key=_field_key("affiliate_code_input"), disabled=is_submitting)
+        customer_name = st.text_input("顧客名 *", key=_field_key("customer_name_input"), disabled=is_submitting)
+        address = st.text_input("住所", key=_field_key("address_input"), disabled=is_submitting)
+        phone = st.text_input("電話番号", key=_field_key("phone_input"), disabled=is_submitting)
+        customer_contact = st.text_input("お客様担当者", key=_field_key("contact_input"), disabled=is_submitting)
+        service = st.selectbox("サービス内容 *", SERVICE_OPTIONS, key=_field_key("service_select"), disabled=is_submitting)
 
         service_other = ""
         if service == "その他（自由記述）":
-            service_other = st.text_input("サービス内容（自由記述） *", key=_field_key("service_other_input"))
+            service_other = st.text_input("サービス内容（自由記述） *", key=_field_key("service_other_input"), disabled=is_submitting)
 
-        inquiry_content = st.text_area("問い合わせ内容", key=_field_key("inquiry_input"))
-        comment = st.text_area("コメント", key=_field_key("comment_input"))
+        inquiry_content = st.text_area("問い合わせ内容", key=_field_key("inquiry_input"), disabled=is_submitting)
+        comment = st.text_area("コメント", key=_field_key("comment_input"), disabled=is_submitting)
 
-        submitted = st.form_submit_button("送信", type="primary", use_container_width=True)
+        submit_label = "送信中..." if is_submitting else "送信"
+        submitted = st.form_submit_button(submit_label, type="primary", use_container_width=True, disabled=is_submitting)
 
-        if submitted:
+        if submitted and not is_submitting:
             errors = []
             if "【ここにデプロイID" in GAS_URL:
                 errors.append("GAS_URL が未設定のため送信できません。")
@@ -500,7 +528,10 @@ with tab_entry:
                 for err in errors:
                     st.warning(err)
             else:
-                record = {
+                # ここでは実際の送信は行わず、内容を保存して is_submitting を立てるだけに
+                # とどめ、すぐに再描画する。こうすることで、次の再描画でボタンが
+                # disabled になった「後」に、はじめて時間のかかるGASへの送信処理を行える。
+                st.session_state["_pending_record"] = {
                     "location": location,
                     "name": name.strip(),
                     "customerCode": customer_code.strip(),
@@ -515,40 +546,55 @@ with tab_entry:
                     "inquiryContent": inquiry_content.strip(),
                     "comment": comment.strip(),
                 }
-                # --- 二重送信防止 ---
-                # 「送信」ボタンを連打したり、通信が遅いタイミングでもう一度押したりすると、
-                # ブラウザ側から送信イベントが複数回届き、同じ内容がスプレッドシートに
-                # 2行以上書き込まれてしまうことがある。直前に送信した内容とまったく同じ
-                # レコードが、短時間（10秒以内）にもう一度送信されようとした場合は、
-                # 実際の送信（GASへのPOST）は行わず、直前の送信結果をそのまま案内する。
-                now = time.time()
-                last_record = st.session_state.get("_last_submitted_record")
-                last_time = st.session_state.get("_last_submitted_time", 0)
-                is_duplicate = (last_record == record) and (now - last_time < 10)
+                st.session_state["is_submitting"] = True
+                st.rerun()
 
-                if is_duplicate:
+    # フォームの外側（st.form の外）で、実際にGASへ送信する処理を行う。
+    # ここに来るのは「送信」ボタンが押されて is_submitting が立てられ、フォームが
+    # disabled な状態で再描画された直後の実行のみ。この実行の中でユーザーが新たに
+    # ボタンを押すことは（disabled のため）できないので、GASへのPOSTは1回しか
+    # 発生しない。
+    if st.session_state.get("is_submitting"):
+        record = st.session_state.get("_pending_record")
+        if record is None:
+            # 万一 pending な内容が無ければ、ロックだけ解除して通常表示に戻す
+            st.session_state["is_submitting"] = False
+        else:
+            now = time.time()
+            last_record = st.session_state.get("_last_submitted_record")
+            last_time = st.session_state.get("_last_submitted_time", 0)
+            # バックアップの二重チェック: 直前に成功したレコードとまったく同じ内容なら、
+            # 時間が経っていても再送信しない（GASは無条件に新しい行を追記するだけで、
+            # 内容の重複判定を行わないため）。
+            is_duplicate = last_record == record
+
+            if is_duplicate:
+                st.session_state["_pending_toast"] = (
+                    f"登録しました（{record['location']} / {record['customerName']}）"
+                )
+            else:
+                result = submit_record(record)
+                if result.get("status") == "success":
+                    st.session_state["_last_submitted_record"] = record
+                    st.session_state["_last_submitted_time"] = now
                     st.session_state["_pending_toast"] = (
-                        f"登録しました（{location} / {customer_name}）"
+                        f"登録しました（{result.get('timestamp')} / {record['location']} / {record['customerName']}）"
                     )
-                    _clear_entry_form()
-                    st.rerun()
                 else:
-                    result = submit_record(record)
-                    if result.get("status") == "success":
-                        st.session_state["_last_submitted_record"] = record
-                        st.session_state["_last_submitted_time"] = now
-                        # 直後に st.rerun() するのでその場のメッセージはすぐ消えてしまう。
-                        # 次の画面表示の一番最初でポップアップ（トースト）表示されるようにする。
-                        st.session_state["_pending_toast"] = (
-                            f"登録しました（{result.get('timestamp')} / {location} / {customer_name}）"
-                        )
-                        # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
-                        # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
-                        _clear_entry_form()
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error(f"送信に失敗しました: {result.get('message', '不明なエラー')}")
+                    st.session_state["_pending_submit_error"] = result.get("message", "不明なエラー")
+
+            st.session_state.pop("_pending_record", None)
+            st.session_state["is_submitting"] = False
+            # clear_on_submit を使わず、フォーム内の全項目をここで明示的にリセットする
+            # （連続で入力したときに前の顧客の情報が残ってしまう不具合を避けるため）。
+            _clear_entry_form()
+            st.cache_data.clear()
+
+        st.rerun()
+
+    _pending_submit_error = st.session_state.pop("_pending_submit_error", None)
+    if _pending_submit_error:
+        st.error(f"送信に失敗しました: {_pending_submit_error}")
 
 # ============================================================
 # 印刷タブ
